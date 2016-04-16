@@ -28,7 +28,6 @@ logger_config = {
             'formatter': 'basic',
             'filename': os.path.join(log_dir, 'log.txt'),
             'when': 'D',
-            'level': 'INFO'
             },
         'console':{
             'class': 'logging.StreamHandler',

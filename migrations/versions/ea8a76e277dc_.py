@@ -41,7 +41,7 @@ def upgrade():
     sa.Column('view_last_month', sa.Integer(), nullable=True),
     sa.Column('house_download_finish', sa.Boolean(), nullable=True),
     sa.Column('house_parse_finish', sa.Boolean(), nullable=True),
-    sa.Column('create_week', sa.Integer(), nullable=True),
+    sa.Column('create_week', sa.Integer(), nullable=False),
     sa.Column('create_date', sa.Date(), nullable=True),
     sa.ForeignKeyConstraint(['community_id'], ['communities.id'], ),
     sa.PrimaryKeyConstraint('id')
@@ -69,9 +69,7 @@ def upgrade():
     sa.Column('price', sa.Integer(), nullable=True),
     sa.Column('view_last_month', sa.Integer(), nullable=True),
     sa.Column('view_last_week', sa.Integer(), nullable=True),
-    sa.Column('download_finish', sa.Boolean(), nullable=True),
-    sa.Column('parse_finish', sa.Boolean(), nullable=True),
-    sa.Column('create_week', sa.Integer(), nullable=True),
+    sa.Column('create_week', sa.Integer(), nullable=False),
     sa.Column('create_date', sa.Date(), nullable=True),
     sa.ForeignKeyConstraint(['house_id'], ['houses.id'], ),
     sa.PrimaryKeyConstraint('id')

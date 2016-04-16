@@ -91,6 +91,7 @@ def download_community_pages(community, c_record):
         # Save html page anyway, for checking latter if parse failed. 
         with open(file_path, 'w') as f:
             f.write(response.text.encode('utf-8'))
+        time.sleep(GlobalConfig().time_interval)
         # check the page we got is the page we want. For example, if we request
         # /d1q5011000013303s8, the page we get should contain the following str:
         #  <a href="/ershoufang/d1q5011000013303s8" class="on">1</a>
@@ -138,10 +139,7 @@ def download_community_pages(community, c_record):
                                     len(house_ids))
                                  )
             else:
-                time.sleep(GlobalConfig().time_interval)
                 break
-        else:
-            time.sleep(GlobalConfig().time_interval)
     else:
         # When loop break as expected, download success. Else, maybe an error.
         raise DownloadError('pages overflow for community: %s' 
@@ -172,6 +170,7 @@ def download_house_page(house, h_record, community_outer_id):
     response = requests.get(url)
     with open(file_path, 'w') as f:
         f.write(response.text.encode('utf-8'))
+    time.sleep(GlobalConfig().time_interval)
     # check the page we got is the page we want
     try:
         p_str = u'房源编号[：:]sh(%s)' % house.outer_id
