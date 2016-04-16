@@ -11,6 +11,10 @@ database = {
 
 log_dir = '/var/log/house_tracker'
 
+data_dir = '/var/data/house_tracker'
+
+time_interval = 1
+
 logger_config = {
     'version': 1,
     'formatters':{
@@ -35,6 +39,14 @@ logger_config = {
     'root':{
         'level': 'INFO',
         'handlers': ['file', 'console']  
+        },
+    'loggers':{
+        # suppress the log info from requests to warn level
+        'requests':{
+            'level': 'WARN',
+            'handlers': ['file'],
+            'propagate': False
+            }       
         },
     # if True, the logger initialized before configuration happening will be disabled.
     'disable_existing_loggers':False

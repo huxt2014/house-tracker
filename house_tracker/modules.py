@@ -1,5 +1,6 @@
 
-from datetime import datetime
+import math
+from datetime import date, datetime
 
 from sqlalchemy import Column, Integer, String, Date, Boolean, Float,ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
@@ -23,8 +24,11 @@ class Community(Base):
     last_track_week = Column('last_track_week', Integer)
     date_create = Column('date_create', Date, nullable=False)
     
-    def __repr__(self):
-        return ("%s-%s-%s" % (self.id, self.outer_id, self.name))
+    def __str__(self):
+        content = ''
+        for key in ('id', 'outer_id', 'name'):
+            content += '%s->%s ' % (key, getattr(self, key))
+        return content
     
 
 class House(Base):
@@ -48,9 +52,20 @@ class House(Base):
     last_track_week = Column('last_track_week', Integer)
     create_date = Column('create_date', Date, default=datetime.now().date)
     
+    def __str__(self):
+        content = ''
+        for key in ('id', 'outer_id', 'area', 'room', 'floor'):
+            content += '%s->%s ' % (key, getattr(self, key))
+        return content
+    
 
 class CommunityRecord(Base):
     __tablename__ = 'community_records'
+    
+    def __init__(self, *args, **kwargs):
+        Base.__init__(self, *args, **kwargs)
+        if not self.create_week:
+            self.create_week = week_number()
     
     id = Column('id', Integer, primary_key=True, autoincrement=True)
     community_id = Column('community_id', None, ForeignKey('communities.id'),
@@ -64,12 +79,24 @@ class CommunityRecord(Base):
     house_download_finish = Column('house_download_finish', Boolean, 
                                    default=False)
     house_parse_finish = Column('house_parse_finish', Boolean, default=False)
-    create_week = Column('create_week', Integer)
+    create_week = Column('create_week', Integer, nullable=False)
     create_date = Column('create_date', Date, default=datetime.now().date)
+    
+    def __str__(self):
+        content = ''
+        for key in ('average_price', 'house_available', 'sold_last_season',
+                    'view_last_month', 'create_week'):
+            content += '%s->%s ' % (key, getattr(self, key))
+        return content
     
 
 class HouseRecord(Base):
     __tablename__ = 'house_records'
+    
+    def __init__(self, *args, **kwargs):
+        Base.__init__(self, *args, **kwargs)
+        if not self.create_week:
+            self.create_week = week_number()
     
     id = Column('id', Integer, primary_key=True, autoincrement=True)
     house_id = Column('house_id', None, ForeignKey('houses.id'), nullable=False)
@@ -78,9 +105,18 @@ class HouseRecord(Base):
     view_last_month = Column('view_last_month', Integer)
     view_last_week = Column('view_last_week', Integer)
     
-    download_finish = Column('download_finish', Boolean, default=False)
-    parse_finish = Column('parse_finish', Boolean, default=False)
-    create_week = Column('create_week', Integer)
+    create_week = Column('create_week', Integer, nullable=False)
     create_date = Column('create_date', Date, default=datetime.now().date)
     
+    def __str__(self):
+        content = ''
+        for key in ('id', 'price', 'view_last_month', 'view_last_week', 
+                    'create_week'):
+            content += '%s->%s ' % (key, getattr(self, key))
+        return content
+    
+def week_number():
+    day_number = (date.today() - date(2016, 4, 3)).days
+    return int(math.ceil(day_number / 7.0))
+ 
     

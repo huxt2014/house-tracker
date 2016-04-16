@@ -20,3 +20,7 @@ class GlobalConfig():
             raise ConfigError('database server configure error: %s missing', 
                               e.args[0])
 
+        
+        for key in ('log_dir', 'data_dir', 'time_interval', 'logger_config'):
+            if not key in self.__dict__.keys():
+                raise ConfigError('%s missing in setting file.')
