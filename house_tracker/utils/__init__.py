@@ -138,6 +138,7 @@ def download_community_pages(community, c_record):
                                     len(house_ids))
                                  )
             else:
+                time.sleep(GlobalConfig().time_interval)
                 break
         else:
             time.sleep(GlobalConfig().time_interval)
