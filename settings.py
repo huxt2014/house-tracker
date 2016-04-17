@@ -1,4 +1,5 @@
 import os
+from datetime import date
 
 database = {
     'driver': 'mysql',
@@ -14,6 +15,8 @@ log_dir = '/var/log/house_tracker'
 data_dir = '/var/data/house_tracker'
 
 time_interval = 1
+
+original_date = date(2016, 4, 15)
 
 logger_config = {
     'version': 1,

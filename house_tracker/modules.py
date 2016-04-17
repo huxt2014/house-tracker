@@ -6,6 +6,9 @@ from sqlalchemy import (Column, Integer, String, DateTime, Boolean, Float,
                         ForeignKey)
 from sqlalchemy.ext.declarative import declarative_base
 
+from house_tracker.utils.conf_tool import GlobalConfig
+
+
 class Base(object):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -101,7 +104,7 @@ class HouseRecord(Base):
 
     
 def week_number():
-    day_number = (date.today() - date(2016, 4, 3)).days
+    day_number = (date.today() - GlobalConfig().original_date).days
     return int(math.ceil(day_number / 7.0))
 
 

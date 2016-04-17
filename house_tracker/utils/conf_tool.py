@@ -21,6 +21,7 @@ class GlobalConfig():
                               e.args[0])
 
         
-        for key in ('log_dir', 'data_dir', 'time_interval', 'logger_config'):
+        for key in ('log_dir', 'data_dir', 'time_interval', 'logger_config',
+                    'original_date'):
             if not key in self.__dict__.keys():
-                raise ConfigError('%s missing in setting file.')
+                raise ConfigError('%s missing in setting file.' % key)

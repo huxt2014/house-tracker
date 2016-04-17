@@ -20,7 +20,7 @@ class Track(Command):
     def run(self):
         force = False
         error_num = 0
-        day_number = (date.today() - date(2016, 4, 3)).days
+        day_number = (date.today() - GlobalConfig().original_date).days
         week_number = int(math.ceil(day_number / 7.0))
         
         session = get_session()

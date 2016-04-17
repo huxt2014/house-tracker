@@ -17,7 +17,7 @@ class TestDownloadCommunity(unittest.TestCase):
         self.config.data_dir = '/tmp/house_tracker'
         self.community_outer_ids = ['5011000003035','5011000014434']
         
-        day_number = (date.today() - date(2016, 4, 3)).days
+        day_number = (date.today() - GlobalConfig().original_date).days
         self.week_number = int(math.ceil(day_number / 7.0))
     
     def test_dowload_and_parse(self):
@@ -67,7 +67,7 @@ class TestDownloadHouse(unittest.TestCase):
         self.config.data_dir = '/tmp/house_tracker'
         self.community_outer_id = '5011000009386'
         
-        day_number = (date.today() - date(2016, 4, 3)).days
+        day_number = (date.today() - GlobalConfig().original_date).days
         self.week_number = int(math.ceil(day_number / 7.0))
     
     def test_dowload_and_parse(self):
