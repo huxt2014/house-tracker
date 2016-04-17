@@ -29,7 +29,7 @@ def track_community(community, session):
     except (ParseError, DownloadError) as e:
         logger.error('parse or download community page failed: %s->%s'
                      % (community.id, community.outer_id))
-        logger.excepion(e)
+        logger.exception(e)
         return False
     
     logger.debug(community)

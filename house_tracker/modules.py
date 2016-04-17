@@ -15,10 +15,11 @@ class Base(object):
     def __str__(self):
         content = 'id->%s ' % self.id
         attrs = [key for key in dir(self) 
-                 if not key.startswith('_') and key != 'id']
+                 if not key.startswith('_') and key != 'id' 
+                    and key != 'metadata']
         for attr in attrs:
             content += '%s->%s ' % (attr, getattr(self, attr))
-            return content
+        return content
 
     
 Base = declarative_base(cls=Base)

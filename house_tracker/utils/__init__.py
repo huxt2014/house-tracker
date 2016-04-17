@@ -18,7 +18,7 @@ base_url = 'http://sh.lianjia.com/ershoufang'
 house_num_per_page = 20.0
 
 
-community_str = (u'小区均价.*?>(\d+).*?元/平'
+community_str = (u'小区均价.*?>(\d+|暂无均价)'
                  u'.*?'
                  u'正在出售中.*?(\d+).*?套'
                  u'.*?'
@@ -34,7 +34,7 @@ house_str = (u'(\d+)<span class="unit">万'
              u'.+?'
              u'>([低|中|高]层/\d+层)<'
              u'.+?'
-             u'(\d+)年建'
+             u'年代.+?(\d{4}|暂无数据)'
              u'.+?'
              u'近7天带看次数.+?(\d+)'
              u'.+?'
@@ -107,7 +107,15 @@ def download_community_pages(community, c_record):
         if page_num == 1:
             try:
                 result = pattern_community.search(response.text)
-                c_record.average_price = community.average_price = int(result.group(1))
+                try:
+                    c_record.average_price = community.average_price = int(result.group(1))
+                except ValueError:
+                    if result.group(1) == u'暂无均价':
+                        c_record.average_price = community.average_price = 0
+                    else:
+                        msg = ('parse community average price failed: '
+                                '%s->%s.') % (community.id, community.outer_id)
+                        raise ParseError(msg)
                 c_record.house_available = community.house_available = int(result.group(2))
                 c_record.sold_last_season = community.sold_last_season = int(result.group(3))
                 c_record.view_last_month = community.view_last_month = int(result.group(4))
@@ -124,6 +132,7 @@ def download_community_pages(community, c_record):
                                 c_record.view_last_month)
                             )
             except Exception as e:
+                logger.exception(e)
                 raise ParseError(('parse community profile failed',) +
                                  e.args)
         
@@ -197,7 +206,13 @@ def download_house_page(house, h_record, community_outer_id):
             house.room = u'%s室%s厅' % (result.group(2), result.group(3))
             house.area = float(result.group(4))
             house.floor = result.group(6)
-            house.build_year = int(result.group(7))
+            try:
+                house.build_year = int(result.group(7))
+            except ValueError:
+                if result.group(7) == u'暂无数据':
+                    house.build_year = 0
+                else:
+                    raise ParseError('parse build year failed: %s' % url)
             
         h_record.parse_finish = True
     except Exception as e:
