@@ -48,7 +48,8 @@ def track_community(community, session):
                     session.add(house)
                     session.commit()
                 
-                h_record = HouseRecord(house_id=house.id)
+                h_record = HouseRecord(house_id=house.id,
+                                       community_id = community.id)
                 download_house_page(house, h_record, community.outer_id)
                 
                 logger.debug(house)

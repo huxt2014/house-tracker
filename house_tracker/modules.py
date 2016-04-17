@@ -50,7 +50,7 @@ class House(Base):
     room = Column('room', String(64))
     build_year = Column('build_year', Integer)
     floor = Column('floor', String(64))
-    available = Column('available', Boolean)
+    available = Column('available', Boolean, default=True)
     
     price = Column('price', Integer)
     view_last_month = Column('view_last_month', Integer)
@@ -88,6 +88,8 @@ class HouseRecord(Base):
             self.create_week = week_number()
     
     id = Column('id', Integer, primary_key=True, autoincrement=True)
+    community_id = Column('community_id', None, ForeignKey('community.id'),
+                          nullable=False)
     house_id = Column('house_id', None, ForeignKey('house.id'), nullable=False)
     
     price = Column('price', Integer)
