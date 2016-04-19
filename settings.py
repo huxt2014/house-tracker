@@ -16,7 +16,7 @@ data_dir = '/var/data/house_tracker'
 
 time_interval = 1
 
-original_date = date(2016, 4, 15)
+original_date = date(2016, 4, 13)
 
 logger_config = {
     'version': 1,
