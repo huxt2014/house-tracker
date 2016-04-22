@@ -1,4 +1,5 @@
 import os
+import tempfile
 import math
 import unittest
 import time
@@ -11,13 +12,15 @@ from house_tracker.utils import (download_community_pages, download_house_page,
 from house_tracker.utils.conf_tool import GlobalConfig
 from house_tracker.utils.exceptions import ParseError
 
+config = GlobalConfig()
+config.data_dir = tempfile.mkdtemp()
+print 'data_dir: %s' % config.data_dir
+
 class TestDownloadCommunity(unittest.TestCase):
-    def setUp(self):
-        self.config = GlobalConfig()
-        self.config.data_dir = '/tmp/house_tracker'
-        self.community_outer_ids = ['5011000003035','5011000014434']
+    def setUp(self):            
+        self.community_outer_ids = ['5011000003035','5011000014434'] 
         
-        day_number = (date.today() - GlobalConfig().original_date).days
+        day_number = (date.today() - config.original_date).days
         self.week_number = int(math.ceil(day_number / 7.0))
     
     def test_dowload_and_parse(self):
@@ -30,12 +33,12 @@ class TestDownloadCommunity(unittest.TestCase):
             house_ids = download_community_pages(community, c_record)
             
             # confirm download success
-            self.assertTrue(os.path.isdir(os.path.join(self.config.data_dir,
+            self.assertTrue(os.path.isdir(os.path.join(config.data_dir,
                                                        str(self.week_number),
                                                        outer_id)))
             page_num = int(math.ceil(c_record.house_available/house_num_per_page))
             for num in range(1, page_num+1):
-                file_path = os.path.join(self.config.data_dir,
+                file_path = os.path.join(config.data_dir,
                                          str(self.week_number),
                                          outer_id,
                                          'page%s.html'%num)
@@ -63,11 +66,9 @@ class TestDownloadCommunity(unittest.TestCase):
 
 class TestDownloadHouse(unittest.TestCase):
     def setUp(self):
-        self.config = GlobalConfig()
-        self.config.data_dir = '/tmp/house_tracker'
         self.community_outer_id = '5011000009386'
         
-        day_number = (date.today() - GlobalConfig().original_date).days
+        day_number = (date.today() - config.original_date).days
         self.week_number = int(math.ceil(day_number / 7.0))
     
     def test_dowload_and_parse(self):
@@ -87,14 +88,14 @@ class TestDownloadHouse(unittest.TestCase):
             except ParseError:
                 # if download success but only parse failed, confirm download 
                 # success only
-                file_path = os.path.join(self.config.data_dir, 
+                file_path = os.path.join(config.data_dir, 
                                      str(self.week_number),
                                      self.community_outer_id,
                                      'house%s.html' % house_outer_id)
                 self.assertTrue(os.path.isfile(file_path), file_path)
             else:
                 # if no exception, confirm download success
-                file_path = os.path.join(self.config.data_dir, 
+                file_path = os.path.join(config.data_dir, 
                                          str(self.week_number),
                                          self.community_outer_id,
                                          'house%s.html' % house_outer_id)
@@ -121,7 +122,7 @@ class TestDownloadHouse(unittest.TestCase):
             print house.__str__().encode('utf-8')
             print h_record.__str__().encode('utf-8')
             
-            time.sleep(self.config.time_interval)
+            time.sleep(config.time_interval)
     
                        
             
