@@ -43,7 +43,11 @@ class Track(Command):
             logger.warn('finish all')
 
 def run():
-    Track().run()
+    try:
+        Track().run()
+    except Exception as e:
+        logger.exception(e)
+        raise
 
     
 

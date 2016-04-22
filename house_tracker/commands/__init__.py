@@ -1,7 +1,8 @@
 
 import logging.config
 
-from house_tracker.modules import House, CommunityRecord, HouseRecord
+from house_tracker.modules import (House, CommunityRecord, HouseRecord, 
+                                   week_number)
 from house_tracker.utils import download_community_pages, download_house_page
 from house_tracker.utils.conf_tool import GlobalConfig
 from house_tracker.utils.exceptions import ParseError, DownloadError
@@ -20,9 +21,16 @@ class Command():
 
 
 def track_community(community, session):
+    
     # download and parse community. If any exception, catch and return.
     try:
-        c_record = CommunityRecord(community_id = community.id)
+        try:
+            c_record = (session.query(CommunityRecord)
+                        .filter_by(community_id=community.id,
+                                   create_week=week_number())[0]
+                        )
+        except IndexError:
+            c_record = CommunityRecord(community_id = community.id)
         house_ids = download_community_pages(community, c_record)
         session.add_all([community, c_record])
         session.commit()
@@ -63,17 +71,20 @@ def track_community(community, session):
             else:
                 # download and parse success
                 session.add_all([house, h_record])
-                session.commit()
-                
                 logger.debug(h_record)
     except DownloadError as e:
         # If any house page download failed, stop and return False.
-        logger.error('download house page error.')
+        logger.error('download house page error: %s' % house.outer_id)
         logger.exception(e)
+        session.rollback()
         
         logger.debug(c_record)
         logger.debug(house)
         return False
+    except Exception:
+        logger.error('download house page error: %s' % house.outer_id)
+        session.rollback()
+        raise
     else:
         c_record = (session.query(CommunityRecord)
                            .filter(CommunityRecord.id == c_record.id))[0]
