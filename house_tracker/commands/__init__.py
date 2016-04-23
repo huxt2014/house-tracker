@@ -20,7 +20,7 @@ class Command():
         raise Exception('should be override by subclass')
 
 
-def track_community(community, session):
+def track_community(community, session, debug=False):
     
     # download and parse community. If any exception, catch and return.
     try:
@@ -33,7 +33,8 @@ def track_community(community, session):
             c_record = CommunityRecord(community_id = community.id)
         house_ids = download_community_pages(community, c_record)
         session.add_all([community, c_record])
-        session.commit()
+        if not debug:
+            session.commit()
     except (ParseError, DownloadError) as e:
         logger.error('parse or download community page failed: %s->%s'
                      % (community.id, community.outer_id))
@@ -54,7 +55,10 @@ def track_community(community, session):
                     house = House(outer_id=outer_id, 
                                   community_id=community.id)
                     session.add(house)
-                    session.commit()
+                    if not debug:
+                        session.commit()
+                    else:
+                        session.flush()
                 
                 h_record = HouseRecord(house_id=house.id,
                                        community_id = community.id)
@@ -92,7 +96,8 @@ def track_community(community, session):
         if parse_error == 0:
             c_record.house_parse_finish = True
         session.add(c_record)
-        session.commit()
+        if not debug:
+            session.commit()
         
         logger.debug(c_record)
         return True

@@ -1,3 +1,4 @@
+# coding=utf-8
 
 import os
 import logging
@@ -23,12 +24,27 @@ class TrackTest(Command):
         
         session = get_session()
         try:
-            community = session.query(Community).order_by(Community.id)[0]
-        except IndexError:
-            print 'no community found.'
-        else:
-            track_community(community, session)
+            session.add(Community(outer_id='5011000018309', name=u'万邦都市花园',
+                                  district=u'浦东新区'))
+            session.add(Community(outer_id='5011000012349', name=u'浦东星河湾',
+                                  district=u'浦东新区'))
+                
+            communities = session.query(Community).order_by(Community.id)
+        
+            for community in communities:
+                track_community(community, session, debug=True)
+                c_record = (session.query(CommunityRecord)
+                            .filter_by(community_id=community.id)[0])
+                h_records = (session.query(HouseRecord)
+                             .filter_by(community_id=community.id)).all()
+                print community.__str__().encode('utf-8')
+                print c_record
+                print 'house available -> %s' % len(h_records)
+                for record in h_records:
+                    print record
+                print ('*'*20 +'\n')*3
         finally:
+            session.rollback()
             session.close()
 
 def run():
