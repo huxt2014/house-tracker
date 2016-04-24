@@ -1,13 +1,13 @@
 """empty message
 
-Revision ID: a399827f5bc2
+Revision ID: f966a450a2e4
 Revises: 
-Create Date: 2016-04-17 10:32:46.262393
+Create Date: 2016-04-23 20:29:22.012159
 
 """
 
 # revision identifiers, used by Alembic.
-revision = 'a399827f5bc2'
+revision = 'f966a450a2e4'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -42,8 +42,8 @@ def upgrade():
     sa.Column('house_available', sa.Integer(), nullable=True),
     sa.Column('sold_last_season', sa.Integer(), nullable=True),
     sa.Column('view_last_month', sa.Integer(), nullable=True),
-    sa.Column('house_download_finish', sa.Boolean(), nullable=True, default=False),
-    sa.Column('house_parse_finish', sa.Boolean(), nullable=True, default=False),
+    sa.Column('house_download_finish', sa.Boolean(), nullable=True),
+    sa.Column('house_parse_finish', sa.Boolean(), nullable=True),
     sa.Column('create_week', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['community_id'], ['community.id'], ),
     sa.PrimaryKeyConstraint('id')
@@ -58,7 +58,7 @@ def upgrade():
     sa.Column('room', sa.String(length=64), nullable=True),
     sa.Column('build_year', sa.Integer(), nullable=True),
     sa.Column('floor', sa.String(length=64), nullable=True),
-    sa.Column('available', sa.Boolean(), nullable=True, default=True),
+    sa.Column('available', sa.Boolean(), nullable=True),
     sa.Column('price', sa.Integer(), nullable=True),
     sa.Column('view_last_month', sa.Integer(), nullable=True),
     sa.Column('view_last_week', sa.Integer(), nullable=True),
@@ -69,11 +69,13 @@ def upgrade():
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('last_modified_at', sa.DateTime(), nullable=True),
     sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('community_id', sa.Integer(), nullable=False),
     sa.Column('house_id', sa.Integer(), nullable=False),
     sa.Column('price', sa.Integer(), nullable=True),
     sa.Column('view_last_month', sa.Integer(), nullable=True),
     sa.Column('view_last_week', sa.Integer(), nullable=True),
     sa.Column('create_week', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['community_id'], ['community.id'], ),
     sa.ForeignKeyConstraint(['house_id'], ['house.id'], ),
     sa.PrimaryKeyConstraint('id')
     )

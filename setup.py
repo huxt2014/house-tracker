@@ -4,7 +4,7 @@ from distutils.core import setup
 
 setup(
     name='house_tracker',
-    version='0.0.1',
+    version='0.1.0',
     description='Tool to track house information in sh.lianjia.com',
     author='Terrence Hu',
     author_email='huxt2013@163.com',
@@ -15,5 +15,5 @@ setup(
                       'MySQL-python==1.2.5'],
     data_files=[('', ['settings.py', 'manager.py', 'alembic.ini']), 
                 ('migrations', ['migrations/env.py']),
-                ('migrations/versions', ['migrations/versions/b5dfa9a7ee03_.py'])]
+                ('migrations/versions', ['migrations/versions/f966a450a2e4_.py'])]
 )
