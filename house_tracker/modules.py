@@ -46,6 +46,11 @@ class Community(Base):
 class House(Base):
     __tablename__ = 'house'
     
+    def __init__(self, *args, **kwargs):
+        Base.__init__(self, *args, **kwargs)
+        if not self.last_track_week:
+            self.last_track_week = week_number()
+    
     community_id = Column('community_id', None, ForeignKey('community.id'),
                           nullable=False)
     outer_id = Column('outer_id', String(128), nullable=False)
@@ -59,6 +64,12 @@ class House(Base):
     price = Column('price', Integer)
     view_last_month = Column('view_last_month', Integer)
     view_last_week = Column('view_last_week', Integer)
+    price_change = Column('price_change', Integer)
+    new = Column('new', Boolean, default=True)
+    available_change_times = Column('available_change_times', Integer, 
+                                    default=0)
+    
+    last_track_week = Column('last_track_week', Integer)
     
 
 class CommunityRecord(Base):
