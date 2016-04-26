@@ -4,7 +4,7 @@ from distutils.core import setup
 
 setup(
     name='house_tracker',
-    version='0.1.0',
+    version='0.2.0',
     description='Tool to track house information in sh.lianjia.com',
     author='Terrence Hu',
     author_email='huxt2013@163.com',
