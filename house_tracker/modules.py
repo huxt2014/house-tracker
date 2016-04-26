@@ -88,6 +88,13 @@ class CommunityRecord(Base):
     sold_last_season = Column('sold_last_season', Integer)
     view_last_month = Column('view_last_month', Integer)
     
+    rise_number = Column('rise_number', Integer)
+    reduce_number = Column('reduce_number', Integer)
+    valid_unchange_number = Column('valid_unchange_number', Integer)
+    new_number = Column('new_number', Integer)
+    miss_number = Column('miss_number', Integer)
+    view_last_week = Column('view_last_week', Integer)
+    
     house_download_finish = Column('house_download_finish', Boolean, 
                                    default=False)
     house_parse_finish = Column('house_parse_finish', Boolean, default=False)

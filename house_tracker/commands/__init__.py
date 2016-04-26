@@ -2,6 +2,7 @@
 import sys
 import logging.config
 
+from house_tracker import db
 from house_tracker.modules import (House, CommunityRecord, HouseRecord, 
                                    week_number)
 from house_tracker.utils import download_community_pages, download_house_page
@@ -119,9 +120,17 @@ def track_community(community, session, debug=False):
         logger.warn('exit by keyboard interrupt.')
         sys.exit(1)
     else:
+        session.flush()
         c_record.house_download_finish = True
         if parse_error == 0:
             c_record.house_parse_finish = True
+            rs = session.execute(db.house_aggregate_community_sql,
+                                 {'last_track_week': week_number(),
+                                  'community_id': community.id}).fetchall()[0]
+            (c_record.rise_number, c_record.reduce_number, 
+             c_record.valid_unchange_number, c_record.new_number, 
+             c_record.miss_number, c_record.view_last_week) = rs
+            
         session.add(c_record)
         if not debug:
             session.commit()

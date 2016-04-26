@@ -31,3 +31,18 @@ def get_session():
     if not Session:
         init_db()
     return Session()
+
+house_aggregate_community_sql ="""
+select sum(case when price_change> 0 then 1 else 0 end), 
+       sum(case when price_change< 0 then 1 else 0 end), 
+       sum(case when price_change = 0 
+                and (view_last_month > 0 or view_last_week > 0) 
+                and new is false then 1 else 0 end),
+       sum(new),
+       sum(case when last_track_week = :last_track_week -1 then 1 else 0 end),
+       sum(view_last_week)
+from house
+where community_id = :community_id
+""" 
+
+
