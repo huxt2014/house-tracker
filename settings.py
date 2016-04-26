@@ -4,7 +4,7 @@ from datetime import date
 database = {
     'driver': 'mysql',
     'host': 'localhost',
-    'name': 'house_tracker',
+    'name': 'house_tracker_test',
     'user': 'terrence',
     'password': '123456',
     

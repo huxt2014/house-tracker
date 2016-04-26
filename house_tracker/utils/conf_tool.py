@@ -1,10 +1,16 @@
 
+import os
+import sys
+
+import house_tracker
 from .decorators import singleton
 from .exceptions import ConfigError
 
 @singleton
 class GlobalConfig():
     def __init__(self):
+        self.root = '/'.join(os.path.abspath(house_tracker.__file__)
+                             .split('/')[:-1])
         import settings
         for key, value in settings.__dict__.iteritems():
             if not key.startswith('_'):
