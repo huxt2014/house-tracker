@@ -4,31 +4,11 @@ from datetime import date, datetime
 
 from sqlalchemy import (Column, Integer, String, DateTime, Boolean, Float, 
                         ForeignKey)
-from sqlalchemy.ext.declarative import declarative_base
 
-from house_tracker.utils.conf_tool import GlobalConfig
+from common.db import Base, BaseMixin
 
 
-class Base(object):
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    created_at = Column( DateTime, default=datetime.now)
-    last_modified_at = Column( DateTime, onupdate=datetime.now)
-
-    def __str__(self):
-        content = 'id->%s ' % self.id
-        attrs = [key for key in dir(self) 
-                 if not key.startswith('_') and key != 'id' 
-                    and key != 'metadata']
-        for attr in attrs:
-            content += '%s->%s ' % (attr, getattr(self, attr))
-        return content
-
-    
-Base = declarative_base(cls=Base)
-
-class Community(Base):
-    __tablename__ = 'community'
+class Community(BaseMixin, Base):
     
     outer_id = Column('outer_id', String(128), nullable=False)
     name = Column('name', String(64), nullable=False)
@@ -43,8 +23,7 @@ class Community(Base):
     last_track_week = Column('last_track_week', Integer)
   
 
-class House(Base):
-    __tablename__ = 'house'
+class House(BaseMixin, Base):
     
     def __init__(self, *args, **kwargs):
         Base.__init__(self, *args, **kwargs)
@@ -72,8 +51,7 @@ class House(Base):
     last_track_week = Column('last_track_week', Integer)
     
 
-class CommunityRecord(Base):
-    __tablename__ = 'community_record'
+class CommunityRecord(BaseMixin, Base):
     
     def __init__(self, *args, **kwargs):
         Base.__init__(self, *args, **kwargs)
@@ -101,8 +79,7 @@ class CommunityRecord(Base):
     create_week = Column('create_week', Integer, nullable=False)
 
 
-class HouseRecord(Base):
-    __tablename__ = 'house_record'
+class HouseRecord(BaseMixin, Base):
     
     def __init__(self, *args, **kwargs):
         Base.__init__(self, *args, **kwargs)
@@ -122,7 +99,8 @@ class HouseRecord(Base):
 
     
 def week_number():
-    day_number = (date.today() - GlobalConfig().original_date).days
+    import settings
+    day_number = (date.today() - settings.original_date).days
     return int(math.ceil(day_number / 7.0))
 
 

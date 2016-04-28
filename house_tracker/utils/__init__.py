@@ -9,7 +9,6 @@ import math
 import requests
 from HTMLParser import HTMLParser
 
-from .conf_tool import GlobalConfig
 from .exceptions import DownloadError, ParseError
 
 
@@ -63,8 +62,8 @@ def download_community_pages(community, c_record):
     """
     data_dir/week_number/community_outer_id/page1.html
     """
-    
-    data_dir = GlobalConfig().data_dir
+    import settings
+    data_dir = settings.data_dir
     
     target_dir = os.path.join(data_dir, str(c_record.create_week))
     if not os.path.isdir(target_dir):
@@ -91,7 +90,7 @@ def download_community_pages(community, c_record):
         # Save html page anyway, for checking latter if parse failed. 
         with open(file_path, 'w') as f:
             f.write(response.text.encode('utf-8'))
-        time.sleep(GlobalConfig().time_interval)
+        time.sleep(settings.time_interval)
         # check the page we got is the page we want. For example, if we request
         # /d1q5011000013303s8, the page we get should contain the following str:
         #  <a href="/ershoufang/d1q5011000013303s8" class="on">1</a>
@@ -142,7 +141,7 @@ def download_community_pages(community, c_record):
         if page_num == page_total:
             if len(house_ids) != c_record.house_available:
                 raise ParseError(('the first page of community %s said %s' 
-                                  'houses available, but %s got.')
+                                  ' houses available, but %s got.')
                                  % (community.outer_id, 
                                     c_record.house_available,
                                     len(house_ids))
@@ -165,8 +164,8 @@ def download_house_page(house, h_record, community_outer_id):
     """
     data_dir/week_number/community_outer_id/house22334455.html
     """
-    
-    data_dir = GlobalConfig().data_dir
+    import settings
+    data_dir = settings.data_dir
     community_dir = os.path.join(data_dir, str(h_record.create_week),
                                  community_outer_id)
     if not os.path.isdir(community_dir):
@@ -179,7 +178,7 @@ def download_house_page(house, h_record, community_outer_id):
     response = requests.get(url)
     with open(file_path, 'w') as f:
         f.write(response.text.encode('utf-8'))
-    time.sleep(GlobalConfig().time_interval)
+    time.sleep(settings.time_interval)
     # check the page we got is the page we want
     try:
         p_str = u'房源编号[：:]sh(%s)' % house.outer_id
@@ -226,5 +225,16 @@ def assert_download_success(content, community=False, house=False):
     
     pass 
     
-    
+house_aggregate_community_sql ="""
+select sum(case when price_change> 0 then 1 else 0 end), 
+       sum(case when price_change< 0 then 1 else 0 end), 
+       sum(case when price_change = 0 
+                and (view_last_month > 0 or view_last_week > 0) 
+                and new is false then 1 else 0 end),
+       sum(new),
+       sum(case when last_track_week = :last_track_week -1 then 1 else 0 end),
+       sum(view_last_week)
+from house
+where community_id = :community_id
+""" 
     

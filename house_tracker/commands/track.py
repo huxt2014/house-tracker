@@ -3,14 +3,13 @@ import math
 import logging
 from datetime import date
 
-from . import Command
-from . import track_community
-from house_tracker.db import get_session
-from house_tracker.modules import (Community, House, CommunityRecord, 
+from . import Command, track_community
+from common.db import get_session
+from house_tracker.models import (Community, House, CommunityRecord, 
                                    HouseRecord)
-from house_tracker.utils.conf_tool import GlobalConfig
 from house_tracker.utils.exceptions import ParseError, DownloadError
 
+import settings
 logger = logging.getLogger(__name__)
 
 class Track(Command):
@@ -18,9 +17,10 @@ class Track(Command):
         Command.__init__(self)
         
     def run(self):
+        logger.info('track start...')
         force = False
         error_num = 0
-        day_number = (date.today() - GlobalConfig().original_date).days
+        day_number = (date.today() - settings.original_date).days
         week_number = int(math.ceil(day_number / 7.0))
         
         session = get_session()

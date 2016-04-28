@@ -9,3 +9,4 @@ if __name__ == '__main__':
         runner.run()
     except ImportError:
         print 'command not exist: %s' % sys.argv[1]
+        raise
