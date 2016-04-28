@@ -75,7 +75,7 @@ def track_community(community, session, debug=False):
                 download_house_page(house, h_record, community.outer_id)
                 
                 if not house.new:
-                    house.price_change = price_old - h_record.price
+                    house.price_change = h_record.price - price_old
                 
                 logger.debug(house)
             except ParseError as e:
@@ -99,6 +99,7 @@ def track_community(community, session, debug=False):
                                         community_id=community.id)
          .update({House.new: False,
                   House.available: False,
+                  House.price_change: None,
                   House.available_change_times: House.available_change_times+1})
          )
         

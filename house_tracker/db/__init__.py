@@ -40,7 +40,7 @@ select sum(case when price_change> 0 then 1 else 0 end),
                 and new is false then 1 else 0 end),
        sum(new),
        sum(case when last_track_week = :last_track_week -1 then 1 else 0 end),
-       sum(view_last_week)
+       sum(case when available is true then view_last_week else 0 end)
 from house
 where community_id = :community_id
 """ 
