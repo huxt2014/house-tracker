@@ -40,10 +40,10 @@ class House(BaseMixin, Base):
     floor = Column('floor', String(64))
     available = Column('available', Boolean, default=True)
     
-    price = Column('price', Integer)
+    price_origin = Column('price_origin', Integer, nullable=False)
+    price = Column('price', Integer, nullable=False)
     view_last_month = Column('view_last_month', Integer)
     view_last_week = Column('view_last_week', Integer)
-    price_change = Column('price_change', Integer)
     new = Column('new', Boolean, default=True)
     available_change_times = Column('available_change_times', Integer, 
                                     default=0)
@@ -92,6 +92,7 @@ class HouseRecord(BaseMixin, Base):
     house_id = Column('house_id', None, ForeignKey('house.id'), nullable=False)
     
     price = Column('price', Integer)
+    price_change = Column('price_change', Integer)
     view_last_month = Column('view_last_month', Integer)
     view_last_week = Column('view_last_week', Integer)
     
