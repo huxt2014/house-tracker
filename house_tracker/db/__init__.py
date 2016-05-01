@@ -33,16 +33,19 @@ def get_session():
     return Session()
 
 house_aggregate_community_sql ="""
-select sum(case when price_change> 0 then 1 else 0 end), 
-       sum(case when price_change< 0 then 1 else 0 end), 
-       sum(case when price_change = 0 
-                and (view_last_month > 0 or view_last_week > 0) 
-                and new is false then 1 else 0 end),
-       sum(new),
-       sum(case when last_track_week = :last_track_week -1 then 1 else 0 end),
-       sum(case when available is true then view_last_week else 0 end)
-from house
-where community_id = :community_id
+select sum(case when T2.price_change> 0 then 1 else 0 end), 
+       sum(case when T2.price_change< 0 then 1 else 0 end), 
+       sum(case when T2.price_change = 0 
+                and (T2.view_last_month > 0 or T2.view_last_week > 0) then 1 
+                else 0 end),
+       sum(T1.new),
+       sum(case when T1.last_track_week = :last_track_week -1 then 1 else 0 end),
+       sum(case when T1.available is true then T2.view_last_week else 0 end)
+from house as T1
+left join house_record as T2
+  on T1.id = T2.house_id
+  and T2.create_week = :last_track_week
+where T1.community_id = :community_id
 """ 
 
 
