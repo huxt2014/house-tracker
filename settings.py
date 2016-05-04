@@ -35,7 +35,7 @@ logger_config = {
         'console':{
             'class': 'logging.StreamHandler',
             'formatter': 'basic',
-            'level': 'WARN'
+            'level': 'INFO'
             }  
         },
     'root':{
@@ -48,7 +48,8 @@ logger_config = {
             'level': 'WARN',
             'handlers': ['file'],
             'propagate': False
-            }       
+            },
+
         },
     # if True, the logger initialized before configuration happening will be disabled.
     'disable_existing_loggers':False
