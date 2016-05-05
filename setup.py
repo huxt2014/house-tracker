@@ -14,8 +14,8 @@ setup(
               "house_tracker.utils", "test", "test.test_utils", 
               "house_tracker.view"],
     install_requires=['alembic==0.8.5', 'requests==2.9.1', 'SQLAlchemy==1.0.12',
-                      'MySQL-python==1.2.5', 'flask==0.10.1', 'jinja2==2.8',
-                      'beaker==1.8.0'],
+                      'MySQL-python==1.2.5', 'flask==0.10.1', 
+                      'flask_admin==1.4.0'],
     data_files=[('', ['settings.py', 'manager.py', 'alembic.ini']), 
                 ('migrations', ['migrations/env.py']),
                 ('migrations/versions', ['migrations/versions/f966a450a2e4_.py'])]
