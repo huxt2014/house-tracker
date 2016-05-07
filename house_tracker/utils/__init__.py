@@ -87,7 +87,7 @@ def download_community_pages(community, c_record):
         url = base_url + inner_uri
         file_path = '%s/page%s.html' % (community_dir, page_num)
         
-        response = requests.get(url)
+        response = try_get_html(url)
         # Save html page anyway, for checking latter if parse failed. 
         with open(file_path, 'w') as f:
             f.write(response.text.encode('utf-8'))
@@ -176,7 +176,7 @@ def download_house_page(house, h_record, community_outer_id):
     # download page
     url = '%s/sh%s.html' % (base_url, house.outer_id)
     file_path = '%s/house%s.html' % (community_dir, house.outer_id)
-    response = requests.get(url)
+    response = try_get_html(url)
     with open(file_path, 'w') as f:
         f.write(response.text.encode('utf-8'))
     time.sleep(GlobalConfig().time_interval)
@@ -226,5 +226,18 @@ def assert_download_success(content, community=False, house=False):
     
     pass 
     
+def try_get_html(url):
+    
+    try_times = 0
+    
+    while try_times < 3:
+        try:
+            return requests.get(url)
+        except Exception as e:
+            try_times += 1
+            logger.warn('try %s times, %s.' % (try_times, e))
+            time.sleep(3)
+    logger.error('download html failed: %s' % url)
+    raise DownloadError
     
     
