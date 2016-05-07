@@ -181,7 +181,7 @@ def download_house_page(house, h_record, community_outer_id):
     time.sleep(settings.time_interval)
     # check the page we got is the page we want
     try:
-        p_str = u'房源编号[：:]sh(%s)' % house.outer_id
+        p_str = u'房源编号[：:]sh(\d+)'
         result = re.search(p_str, response.text)
         if str(result.group(1)) != str(house.outer_id):
             raise DownloadError('Request house %s but %s get, url is %s.' 

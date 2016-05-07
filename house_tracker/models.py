@@ -4,8 +4,9 @@ from datetime import date, datetime
 
 from sqlalchemy import (Column, Integer, String, DateTime, Boolean, Float, 
                         ForeignKey)
+from sqlalchemy.orm import relationship
 
-from common.db import Base, BaseMixin
+from .utils.db import Base, BaseMixin
 
 
 class Community(BaseMixin, Base):
@@ -21,6 +22,9 @@ class Community(BaseMixin, Base):
     view_last_month = Column('view_last_month', Integer)
     
     last_track_week = Column('last_track_week', Integer)
+    
+    def __str__(self):
+        return self.name
   
 
 class House(BaseMixin, Base):
@@ -49,6 +53,8 @@ class House(BaseMixin, Base):
                                     default=0)
     
     last_track_week = Column('last_track_week', Integer)
+  
+    community = relationship('Community', back_populates='houses')
     
 
 class CommunityRecord(BaseMixin, Base):
@@ -77,6 +83,14 @@ class CommunityRecord(BaseMixin, Base):
                                    default=False)
     house_parse_finish = Column('house_parse_finish', Boolean, default=False)
     create_week = Column('create_week', Integer, nullable=False)
+    
+    community = relationship('Community', back_populates='community_records')
+    
+Community.houses = relationship('House', order_by=House.view_last_month,
+                                back_populates='community')
+Community.community_records = relationship('CommunityRecord', 
+                                           order_by=CommunityRecord.view_last_month,
+                                           back_populates='community')
 
 
 class HouseRecord(BaseMixin, Base):

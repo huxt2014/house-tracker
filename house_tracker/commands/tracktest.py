@@ -7,11 +7,10 @@ import tempfile
 from datetime import datetime
 
 from . import Command, track_community
-from common.db import get_session
 from house_tracker.models import (Community, House, CommunityRecord, 
                                   HouseRecord, week_number)
 from house_tracker.utils.exceptions import ParseError, DownloadError
-
+from house_tracker.utils.db import get_session
 
 import settings
 logger = logging.getLogger(__name__)
@@ -49,8 +48,8 @@ class TrackTest(Command):
                                         create_week=week_number())
                              .all()
                              )
-                print community.__str__().encode('utf-8')
-                print c_record
+                print community.__repr__().encode('utf-8')
+                print c_record.__repr__().encode('utf-8')
                 print 'house available -> %s' % len(h_records)
                 for record in h_records:
                     print record

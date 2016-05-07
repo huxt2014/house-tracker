@@ -59,8 +59,8 @@ class TestDownloadCommunity(unittest.TestCase):
                                  getattr(c_record, attr), attr)
             self.assertEqual(community.last_track_week, c_record.create_week)
             
-            print community.__str__().encode('utf-8')
-            print c_record.__str__().encode('utf-8')
+            print community.__repr__().encode('utf-8')
+            print c_record.__repr__().encode('utf-8')
 
 
 class TestDownloadHouse(unittest.TestCase):
@@ -118,8 +118,8 @@ class TestDownloadHouse(unittest.TestCase):
                 self.assertIsInstance(house.floor, unicode)
                 self.assertTrue(house.available)
                 
-            print house.__str__().encode('utf-8')
-            print h_record.__str__().encode('utf-8')
+            print house.__repr__().encode('utf-8')
+            print h_record.__repr__().encode('utf-8')
             
             time.sleep(settings.time_interval)
     

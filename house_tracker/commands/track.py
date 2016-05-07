@@ -5,9 +5,9 @@ from datetime import date
 
 
 from . import Command, track_community, confirm_result
-from common.db import get_session
 from house_tracker.models import (Community, House, CommunityRecord, 
                                   HouseRecord)
+from house_tracker.utils.db import get_session
 from house_tracker.utils.exceptions import ParseError, DownloadError
 
 

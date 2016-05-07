@@ -32,6 +32,14 @@
             <input type="checkbox" value="remember-me"> Remember me
           </label>
         </div>
+        {% if next is defined %}
+        <input type="hidden" name="next" value="{{next}}">
+        {%  endif %}
+        {% if status == "failed" %}
+        <div class="alert alert-info" role="alert">
+            authenticate failed
+        </div>
+        {%  endif %}
         <button class="btn btn-lg btn-primary btn-block" type="submit">Sign in</button>
       </form>
 

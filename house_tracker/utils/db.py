@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, DateTime
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base, declared_attr 
+from sqlalchemy.orm.collections import InstrumentedList
 
 
 Base = declarative_base()
@@ -24,12 +25,14 @@ class BaseMixin(object):
     created_at = Column(DateTime, default=datetime.now)
     last_modified_at = Column(DateTime, onupdate=datetime.now)
 
-    def __str__(self):
+    def __repr__(self):
         content = 'id->%s ' % self.id
         attrs = [key for key in dir(self) 
                  if not key.startswith('_') and key != 'id' 
                     and key != 'metadata']
         for attr in attrs:
+            if isinstance(getattr(self, attr), InstrumentedList):
+                continue
             content += '%s->%s ' % (attr, getattr(self, attr))
         return content
     

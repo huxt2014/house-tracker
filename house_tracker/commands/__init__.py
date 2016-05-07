@@ -7,11 +7,11 @@ from sqlalchemy import or_, and_
 from sqlalchemy.sql import func
 from sqlalchemy.sql.expression import case
 
-from common import db
-from common.exceptions import ConfigError
+from house_tracker.utils import db
 from house_tracker.utils import (house_aggregate_community_sql,
                                  download_community_pages, download_house_page)
-from house_tracker.utils.exceptions import ParseError, DownloadError
+from house_tracker.utils.exceptions import (ParseError, DownloadError, 
+                                            ConfigError)
 from house_tracker.models import (House, CommunityRecord, HouseRecord, 
                                   week_number)
 
