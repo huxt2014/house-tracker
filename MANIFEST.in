@@ -1,0 +1,5 @@
+recursive-include house_tracker/static *
+recursive-include house_tracker/templates *
+recursive-include migrations *
+include alembic.ini
+global-exclude *.pyc

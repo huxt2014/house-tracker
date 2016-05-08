@@ -44,8 +44,8 @@ class House(BaseMixin, Base):
     floor = Column('floor', String(64))
     available = Column('available', Boolean, default=True)
     
-    price_origin = Column('price_origin', Integer, nullable=False)
-    price = Column('price', Integer, nullable=False)
+    price_origin = Column('price_origin', Integer)
+    price = Column('price', Integer)
     view_last_month = Column('view_last_month', Integer)
     view_last_week = Column('view_last_week', Integer)
     new = Column('new', Boolean, default=True)
