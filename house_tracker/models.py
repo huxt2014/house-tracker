@@ -111,6 +111,12 @@ class HouseRecord(BaseMixin, Base):
     view_last_week = Column('view_last_week', Integer)
     
     create_week = Column('create_week', Integer, nullable=False)
+    
+    community = relationship('Community', back_populates='house_records')
+
+Community.house_records = relationship('HouseRecord', 
+                                       order_by=HouseRecord.create_week,
+                                       back_populates='community')
 
     
 def week_number():

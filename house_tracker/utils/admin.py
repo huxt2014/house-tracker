@@ -24,12 +24,14 @@ class MyAdminIndexView(SimpleAuthMixin, AdminIndexView):
 class BaseView(SimpleAuthMixin, ModelView):
     # remove fields from the create and edit forms
     form_excluded_columns = ['created_at', 'last_modified_at']
+    column_exclude_list = ['created_at', 'last_modified_at']
     
 
 class CommunityView(BaseView):
     # remove fields from the create and edit forms
     form_columns = ['outer_id', 'name', 'district', 'area', 'last_track_week']
     column_searchable_list = ('outer_id', 'name')
+    column_filters = ('last_track_week', 'district', 'area')
 
 
 class HouseView(BaseView):
@@ -45,6 +47,14 @@ class CommunityRecordView(BaseView):
     }
     column_filters = ('community', 'create_week')
 
+class HouseRecordView(BaseView):
+    cloumn_default_sort = 'community_id'
+    column_formatters = {
+        'community': lambda v, c, m, p: m.community.name
+    }
+    column_filters = ('community', 'create_week', 'price', 'price_change',
+                      'view_last_month', 'view_last_week')
+
 
 def setup(app):
     admin = Admin(app, name='house_tracker', template_mode='bootstrap3',
@@ -52,4 +62,7 @@ def setup(app):
     admin.add_view(CommunityView(Community, get_session()))
     admin.add_view(HouseView(House, get_session()))
     admin.add_view(CommunityRecordView(CommunityRecord, get_session()))
-    admin.add_view(BaseView(HouseRecord, get_session()))
+    admin.add_view(HouseRecordView(HouseRecord, get_session()))
+    
+    
+    
