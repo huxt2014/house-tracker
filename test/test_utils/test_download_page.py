@@ -11,7 +11,7 @@ from house_tracker.utils import (download_community_pages, download_house_page,
                                  house_num_per_page)
 from house_tracker.utils.exceptions import ParseError
 
-import settings
+import house_tracker_settings as settings
 settings.data_dir = tempfile.mkdtemp()
 print 'data_dir: %s' % settings.data_dir
 

@@ -120,7 +120,7 @@ Community.house_records = relationship('HouseRecord',
 
     
 def week_number():
-    import settings
+    import house_tracker_settings as settings
     day_number = (date.today() - settings.original_date).days
     return int(math.ceil(day_number / 7.0))
 

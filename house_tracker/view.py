@@ -7,7 +7,7 @@ from flask import render_template, request, redirect, url_for, session
 from . import get_application
 
 
-import settings
+import house_tracker_settings as settings
 logger = logging.getLogger(__name__)
 app = get_application()
 

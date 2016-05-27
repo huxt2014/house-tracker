@@ -12,7 +12,7 @@ from house_tracker.models import (Community, House, CommunityRecord,
 from house_tracker.utils.exceptions import ParseError, DownloadError
 from house_tracker.utils.db import get_session
 
-import settings
+import house_tracker_settings as settings
 logger = logging.getLogger(__name__)
 date_today = datetime.today().strftime('%Y-%m-%d')
 

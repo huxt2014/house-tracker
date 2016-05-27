@@ -5,7 +5,7 @@ from . import Command
 from .. import view, get_application
 
 
-import settings
+import house_tracker_settings as settings
 logger = logging.getLogger(__name__)
 
 class Runserver(Command):        

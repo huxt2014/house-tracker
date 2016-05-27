@@ -17,7 +17,7 @@ from house_tracker.models import (House, CommunityRecord, HouseRecord,
 
 
 
-import settings
+import house_tracker_settings as settings
 logger = logging.getLogger(__name__)
 
 class Command():

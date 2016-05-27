@@ -7,7 +7,7 @@ from .db import get_session
 from ..models import Community, House, CommunityRecord, HouseRecord
 
 
-import settings
+import house_tracker_settings as settings
 
 class SimpleAuthMixin(object):
     def is_accessible(self):

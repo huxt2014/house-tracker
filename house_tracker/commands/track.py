@@ -11,7 +11,7 @@ from house_tracker.utils.db import get_session
 from house_tracker.utils.exceptions import ParseError, DownloadError
 
 
-import settings
+import house_tracker_settings as settings
 logger = logging.getLogger(__name__)
 
 class Track(Command):

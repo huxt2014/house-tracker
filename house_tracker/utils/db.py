@@ -43,7 +43,7 @@ engine = None
 Session = None
 
 def get_database_url():
-    import settings
+    import house_tracker_settings as settings
     
     config = settings.database
     return  ('%s://%s:%s@%s/%s?charset=utf8' % 

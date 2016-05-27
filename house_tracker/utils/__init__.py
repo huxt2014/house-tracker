@@ -62,7 +62,7 @@ def download_community_pages(community, c_record):
     """
     data_dir/week_number/community_outer_id/page1.html
     """
-    import settings
+    import house_tracker_settings as settings
     data_dir = settings.data_dir
     
     target_dir = os.path.join(data_dir, str(c_record.create_week))
@@ -164,7 +164,7 @@ def download_house_page(house, h_record, community_outer_id):
     """
     data_dir/week_number/community_outer_id/house22334455.html
     """
-    import settings
+    import house_tracker_settings as settings
     data_dir = settings.data_dir
     community_dir = os.path.join(data_dir, str(h_record.create_week),
                                  community_outer_id)
