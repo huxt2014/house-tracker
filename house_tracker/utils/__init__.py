@@ -246,14 +246,18 @@ def try_get_html(url):
     
     try_times = 0
     
-    while try_times < 3:
+    while True:
         try:
-            return requests.get(url)
-        except Exception as e:
             try_times += 1
-            logger.warn('try %s times, %s.' % (try_times, e))
-            time.sleep(3)
-    logger.error('download html failed: %s' % url)
+            return requests.get(url)
+        except requests.exceptions.RequestException as e:
+            logger.exception(e)
+            if try_times <3:
+                logger.warn('%s-th try failed: %s.', try_times, url)
+                time.sleep(3)
+            else:
+                break
+    logger.error('get html failed: %s', url)
     raise DownloadError
     
 
