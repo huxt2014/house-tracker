@@ -21,7 +21,7 @@ from sqlalchemy.orm.collections import InstrumentedList
 
 __all__ = ['District', 'Community', 'CommunityLJ', 'CommunityFD', 'House',
            'CommunityRecord', 'HouseRecord', 'PresalePermit', 'Job', 
-           'DistrictJob',  'CommunityJob']
+           'DistrictJob', 'CommunityJob', 'PresaleJob']
 
 logger = logging.getLogger(__name__)
 Base = declarative_base()
@@ -65,8 +65,7 @@ class District(BaseMixin, Base):
                 
     def init_batch_jobs(self, session, batch_number):
         first_page_job = DistrictJob(district=self, 
-                                     batch_number=batch_number, 
-                                     target_url=self.fd_search_url(1),
+                                     batch_number=batch_number,
                                      parameters={'page': 1})
         session.add(first_page_job)
         first_page_job.start(session)
@@ -157,16 +156,24 @@ class CommunityFD(Community):
     total_number = Column(INTEGER)
     total_area = Column(FLOAT)
     location = Column(VARCHAR(1024))
+    track_presale = Column(BOOLEAN, default=True)
+    presale_url_name = Column(VARCHAR(1024))
+    company = Column(VARCHAR(1024))
+    # presales = relationship('PresalePermit')
     
     __mapper_args__ = {
         'polymorphic_identity': 'fangdi',
         }
     
     def presale_url(self):
-        query = urllib.urlencode({'projectname': self.name.encode('gb2312')})
+        project_name = (self.presale_url_name or self.name).encode('gbk')
+        query = urllib.urlencode({'projectname': project_name})
         return 'http://www.fangdi.com.cn/Presell.asp?projectID=%s&%s'%(
                     self.tmp_id, query)
-    
+        
+    def community_url(self):
+        return 'http://www.fangdi.com.cn/proDetail.asp?projectID=%s' % self.tmp_id
+        
     @property
     def tmp_id(self):
         return self.generate_tmp_id()
@@ -190,12 +197,21 @@ class CommunityFD(Community):
             if not row.get('onclick'):
                 continue
             tds = row.find_all('td', recursive=False)
+            
             try:
                 sale_date = date(*(int(e) for e in tds[2].get_text().split('-')))
             except Exception as e:
                 # date may be null
-                logger.warn(e)
+                logger.warn('%s get date failed: %s', self.id, e.__str__())
                 sale_date=None
+                
+            try:
+                status = tds[7].get_text()
+            except Exception as e:
+                # status may be null
+                logger.warn('%s get status failed: %s', self.id, e.__str__())
+                status = None
+            
             presale_list.append(
                 {'serial_number': tds[0].get_text(),
                  'description': tds[1].get_text(),
@@ -204,14 +220,40 @@ class CommunityFD(Community):
                  'normal_number': int(tds[4].get_text()),
                  'total_area': tds[5].get_text(),
                  'normal_area': float(tds[6].get_text().split(' ')[0]),
-                 'status': tds[7].get_text()
+                 'status': status
                  })
+        
         if not presale_list:
             raise Exception('parse error.')
         
         return presale_list
-            
+    
+    def parse_community_page(self, content):
+        soup = BeautifulSoup(content, 'html.parser')
         
+        for table in soup.find_all('table'):
+            try:
+                if table.tr.td.get_text() == u'项目名称：':
+                    break
+            except Exception:
+                continue
+        else:
+            raise Exception('parse error')
+        
+        c_info = {}
+        trs = table.find_all('tr', recursive=False)
+        
+        # get area
+        tds = trs[1].find_all('td', recursive=False)
+        c_info['area'] = tds[3].get_text()
+        
+        # get company
+        tds = trs[2].find_all('td', recursive=False)
+        c_info['company'] = tds[1].get_text()
+        
+        c_info['presale_url_name'] = soup.iframe['src'].split('projectname=')[1]
+        
+        return c_info
 
 class House(BaseMixin, Base):
     __tablename__ = 'house'
@@ -301,6 +343,8 @@ class PresalePermit(BaseMixin, Base):
     __tablename__ = 'presale_permit'
     
     community_id = Column(INTEGER, ForeignKey('community.id'), nullable=False)
+    community = relationship('CommunityFD', backref=backref('presales'),
+                             foreign_keys=community_id)
     
     serial_number = Column(VARCHAR(32))
     description = Column(VARCHAR(1024))
@@ -316,7 +360,7 @@ class Job(BaseMixin, Base):
     
     batch_number = Column(INTEGER, nullable=False)
     status = Column(VARCHAR(64), default='ready')
-    target_url = Column(VARCHAR(1024), nullable=False)
+    target_url = Column(VARCHAR(1024))
     parameters = Column(PickleType, default={})
     type = Column(VARCHAR(64))
     
@@ -335,68 +379,130 @@ class DistrictJob(Job):
         }
         
     def start(self, session):
-        page_index = self.parameters['page']
-        res = http_request(self.target_url, 'get')
-        if res.status_code != 200:
-            logger.error('bad response: %s, %s', res.status_code, 
-                         self.target_url)
-            raise Exception
-        res.encoding = 'gb2312'
-        community_list, total_page = self.district.parse_html(res.text, 
-                                                              page_index)
-        
-        if page_index == 1:
-            # add district job for the rest pages
-            for i in range(total_page-1):
-                session.add(DistrictJob(district=self.district, 
-                                        batch_number=self.batch_number,
-                                        target_url=self.district.fd_search_url(i+2),
-                                        parameters={'page': i+2}))
-        
-        # add community job
-        for c_info in community_list:
-            community = (session.query(CommunityFD)
-                                .filter_by(outer_id=c_info['outer_id'])
-                                .first())
-            if not community:
-                community = CommunityFD(district=self.district,
-                                        **c_info)
-                session.add(community)
-            session.add(CommunityJob(batch_number=self.batch_number,
-                                     target_url=community.presale_url(),
-                                     community=community))
-        self.status = 'succeed'    
-        session.commit()
+        try:
+            page_index = self.parameters['page']
+            target_url = self.target_url=self.district.fd_search_url(page_index)
+            res = http_request(self.target_url, 'get')
+            if res.status_code != 200:
+                logger.error('bad response: %s, %s', res.status_code, 
+                             self.target_url)
+                raise Exception
+            res.encoding = 'gbk'
+            community_list, total_page = self.district.parse_html(res.text, 
+                                                                  page_index)
             
+            if page_index == 1:
+                # add district job for the rest pages
+                for i in range(total_page-1):
+                    session.add(DistrictJob(district=self.district, 
+                                            batch_number=self.batch_number,
+                                            parameters={'page': i+2}))
+            
+            # add community job
+            for c_info in community_list:
+                community = (session.query(CommunityFD)
+                                    .filter_by(outer_id=c_info['outer_id'])
+                                    .first())
+                if not community:
+                    community = CommunityFD(district=self.district,
+                                            track_presale=True,
+                                            **c_info)
+                    session.add(community)
+                
+                if community.track_presale:
+                    session.add(PresaleJob(batch_number=self.batch_number,
+                                           community=community))
+            self.status = 'succeed'    
+            session.commit()
+        except Exception as e:
+            logger.exception(e)
+            session.rollback()
+            try:
+                self.target_url = target_url
+            except NameError:
+                pass
+            self.status = 'failed'
+            session.commit()
+            raise e
 
 class CommunityJob(Job):
     community_id = Column(INTEGER, ForeignKey('community.id'))
     community = relationship('Community', backref=backref('jobs'),
                              foreign_keys=community_id)
+    
     __mapper_args__ = {
         'polymorphic_identity': 'community_job',
         }
     
     def start(self, session):
-        res = http_request(self.target_url, 'get')
-        if res.status_code != 200:
-            logger.error('bad response: %s, %s', res.status_code, 
-                         self.target_url)
-            raise Exception
-        res.encoding = 'gb2312'
-        presales = self.community.parse_presale_page(res.text)
-        
-        for presale_info in presales:
-            presale = (session.query(PresalePermit)
-                              .filter_by(community_id=self.community.id,
-                                         serial_number=presale_info['serial_number'])
-                              .first())
-            if not presale:
-                presale_info['community_id'] = self.community.id
-                session.add(PresalePermit(**presale_info))
-        self.status='succeed'
-        
-        session.commit()
+        try:
+            if self.status not in ('ready', 'retry'):
+                raise Exception('job status error')
+            target_url = self.target_url = self.community.community_url()
+            
+            res = http_request(self.target_url, 'get')
+            if res.status_code != 200:
+                logger.error('bad response: %s, %s', res.status_code, 
+                             self.target_url)
+                raise Exception
+            res.encoding = 'gbk'
+            c_info = self.community.parse_community_page(res.text)
+            
+            for key, value in c_info.iteritems():
+                setattr(self.community, key, value)
+            self.status = 'succeed'
+            session.commit()
+        except Exception as e:
+            logger.exception(e)
+            session.rollback()
+            try:
+                self.target_url = target_url
+            except NameError:
+                pass
+            self.status = 'failed'
+            session.commit()
+            raise e
+            
+class PresaleJob(CommunityJob):
+    
+    __mapper_args__ = {
+        'polymorphic_identity': 'presale_job',
+        }
+    
+    def start(self, session):
+        try:
+            if self.status not in ('ready', 'retry'):
+                raise Exception('job status error')
+            target_url = self.target_url = self.community.presale_url()
+            res = http_request(self.target_url, 'get')
+            if res.status_code != 200:
+                logger.error('bad response: %s, %s', res.status_code, 
+                             self.target_url)
+                raise Exception
+            res.encoding = 'gbk'
+            presales = self.community.parse_presale_page(res.text)
+            
+            for presale_info in presales:
+                presale = (session.query(PresalePermit)
+                                  .filter_by(community_id=self.community.id,
+                                             serial_number=presale_info['serial_number'])
+                                  .first())
+                if not presale:
+                    presale_info['community_id'] = self.community.id
+                    session.add(PresalePermit(**presale_info))
+            self.status='succeed'
+            session.commit()
+        except Exception as e:
+            logger.exception(e)
+            session.rollback()
+            try:
+                self.target_url = target_url
+            except NameError:
+                pass
+            self.status = 'failed'
+            session.commit()
+            raise e
+    
 
 Community.house_records = relationship('HouseRecord', 
                                        order_by=HouseRecord.create_week,

@@ -1,15 +1,10 @@
 # coding=utf-8
 
-import re
 import logging
-import requests
-from sqlalchemy import func, and_
+from sqlalchemy import func
 from sqlalchemy.orm import joinedload
-from bs4 import BeautifulSoup
 
 from house_tracker.models import *
-from house_tracker.utils import try_get_html
-from house_tracker.utils.exceptions import DownloadError, ParseError
 from house_tracker.utils.db import get_session
 from . import Command
 
@@ -41,13 +36,14 @@ def run():
         else:
             district.init_batch_jobs(session, current_batch)
     
+    '''
     # finish all jobs
     jobs = (session.query(DistrictJob).options(joinedload('district'))
                    .filter_by(batch_number=current_batch,
                               status='ready')
                    .all())
-    
-    jobs += (session.query(CommunityJob)
+    '''
+    jobs = (session.query(PresaleJob)
                    .filter_by(batch_number=current_batch,
                               status='ready')
                    .all())
@@ -56,8 +52,7 @@ def run():
         try:
             job.start(session)
         except Exception as e:
-            logger.exception(e)
-            session.rollback()
+            print e
             failed_number += 1
     
     
@@ -68,10 +63,6 @@ def run():
 
 
 
-                
-
-def deal_communities(session, districts, current_batch):
-    pass
 
 
     
