@@ -1,6 +1,7 @@
 # coding=utf-8
 
 import logging
+
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 

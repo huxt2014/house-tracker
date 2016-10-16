@@ -16,10 +16,10 @@ def get_database_url():
               config['host'], config['name'])
              )
 
-def init_db():
+def init_db(**kwargs):
     global engine, Session
     if not engine:
-        engine = create_engine(get_database_url(), encoding='utf-8')
+        engine = create_engine(get_database_url(), encoding='utf-8', **kwargs)
     if not Session:
         Session = sessionmaker(bind=engine)
     
@@ -28,8 +28,8 @@ def get_engine():
         init_db()
     return engine
 
-def get_session():
+def get_session(**kwargs):
     if not Session:
-        init_db()
+        init_db(**kwargs)
     return Session()
 

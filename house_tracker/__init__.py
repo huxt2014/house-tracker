@@ -5,8 +5,7 @@ import importlib
 
 from flask import Flask
 
-version = '0.4.0'
-
+version = '0.6.0'
 
 root_path = os.path.dirname(os.path.abspath(__file__))
 
@@ -22,10 +21,7 @@ def get_application():
     return app
 
 def run():
-    pkg = 'house_tracker.commands'
-    try:
-        module = importlib.import_module('.'+sys.argv[1], pkg)
-    except ImportError:
-        module = importlib.import_module('.alembic', pkg)
-        
+    sys.argv = sys.argv[1:]
+    module = importlib.import_module('.'+sys.argv[0],
+                                     'house_tracker.commands')
     module.run()
