@@ -14,9 +14,7 @@ log_dir = '/var/log/house_tracker'
 
 data_dir = '/var/data/house_tracker'
 
-time_interval = 1
-
-original_date = date(2016, 4, 13)
+interval_time = 0.3
 
 logger_config = {
     'version': 1,
@@ -35,17 +33,16 @@ logger_config = {
         'console':{
             'class': 'logging.StreamHandler',
             'formatter': 'basic',
-            'level': 'INFO'
             }  
         },
     'root':{
         'level': 'INFO',
-        'handlers': ['file', 'console']  
+        'handlers': ['file', 'console']
         },
     'loggers':{
         # suppress the log info from requests to warn level
         'requests':{
-            'level': 'WARN',
+            'level': 'DEBUG',
             'handlers': ['file'],
             'propagate': False
             },

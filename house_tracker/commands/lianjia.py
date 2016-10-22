@@ -1,6 +1,7 @@
 
 import os
 import math
+import time
 import logging
 import requests
 
@@ -24,50 +25,75 @@ class BatchJob(Command):
         last_batch = (self.session
                           .query(func.max(CommunityLJ.last_batch_number))
                           .scalar() )
-        last_batch = last_batch or 0
+        self.last_batch = last_batch or 0
         
-        if self.args.new_batch:
-            num_not_finish = (
-                    self.session
-                        .query(func.count(CommunityJobLJ.id))
-                        .filter_by(batch_number=last_batch)
-                        .filter(Job.status != 'succeed')
-                        .scalar() )
-            num_not_finish += (
-                    self.session
-                        .query(func.count(HouseJobLJ.id))
-                        .filter_by(batch_number=last_batch)
-                        .filter(Job.status != 'succeed')
-                        .scalar() )
-            if num_not_finish:
-                raise BatchJobError('old batch not finish yet.')
-            else:
-                self.current_batch = last_batch + 1
+    def config_parser(self):
+        subparsers = self.parser.add_subparsers(dest='subcommand')
+        
+        init_parser = subparsers.add_parser('init')
+        start_parser = subparsers.add_parser('start')
+        
+    def run(self):
+        if self.args.subcommand == 'init':
+            self.init()
+        elif self.args.subcommand == 'start':
+            self.start()
+        
+        #confirm_result()
+    
+    def init(self):
+        logger.info('last batch number is %s.', self.last_batch)
+        num_not_finish = (self.session
+                              .query(func.count(CommunityJobLJ.id))
+                              .filter_by(batch_number=self.last_batch)
+                              .filter(Job.status != 'succeed')
+                              .scalar() )
+        num_not_finish += (self.session
+                               .query(func.count(HouseJobLJ.id))
+                               .filter_by(batch_number=self.last_batch)
+                               .filter(Job.status != 'succeed')
+                               .scalar() )
+        if num_not_finish:
+            raise BatchJobError('old batch not finish yet.')
         else:
-            if last_batch == 0:
-                raise BatchJobError('No job exists, initial a new batch.')
-            else:
-                self.current_batch = last_batch
-                
+            self.set_current_batch(self.last_batch + 1)
+        
+        try:
+            communities = self.session.query(CommunityLJ).all()
+            for c in communities:
+                self.init_batch_jobs(c)
+        except Exception as e:
+            logger.exception(e)
+            self.session.rollback()
+            logger.info('initial new batch failed: %s', self.current_batch)
+        else:
+            self.session.commit()
+            logger.info('initial new batch finish: %s', self.current_batch)
+        
+        
+   
+    def start(self):
+        if self.last_batch == 0:
+            raise BatchJobError('No job exists, initial a new batch.')
+        else:
+            self.set_current_batch(self.last_batch)
+        
+        logger.info('%s-th batch start...', self.current_batch)
+    
+        communities = self.session.query(CommunityLJ).all()
+        
+        for c in communities:
+            self.finish_current_batch_jobs(c)
+    
+    def set_current_batch(self, batch_num):
+        self.current_batch = batch_num
         cache_dir = os.path.join(settings.data_dir, 
                                  'cache/%s' % self.current_batch)
         if not os.path.isdir(cache_dir):
             os.makedirs(cache_dir)
+        
         os.environ['HOUSE_TRACKER_CACHE_DIR'] = cache_dir
         
-        
-    def run(self):
-        logger.info('%s-th batch start...', self.current_batch)
-        
-        communities = self.session.query(CommunityLJ).all()
-        for c in communities:
-            if c.last_batch_number != self.current_batch:
-                self.init_batch_jobs(c)
-        
-        for c in communities:
-            self.finish_current_batch_jobs(c)
-            
-        #confirm_result()
         
     def finish_current_batch_jobs(self, community):
         logger.info('begin community jobs: %s -> %s',
@@ -100,6 +126,11 @@ class BatchJob(Command):
                          .all() )
         for job in h_jobs:
             job.start(session, interval_time=self.interval_time)
+        
+        if not c_jobs and not h_jobs:
+            logger.info('no unfinished job.')
+            session.rollback()
+            return
         
         # update the state of missing houses
         (session.query(HouseLJ)
@@ -140,27 +171,24 @@ class BatchJob(Command):
          c_record.valid_unchange_number, c_record.new_number, 
          c_record.miss_number, c_record.view_last_week) = rs
         
+        logger.info('finish')
         session.commit()
     
     def init_batch_jobs(self, community):
         logger.info('initial community batch jobs: %s -> %s', 
                     community.id, community.outer_id)
-        try:
-            job = CommunityJobLJ(community, 1, self.current_batch)
-            first_page = job.get_web_page(cache=True)
-            c_info, house_ids = community.parse_page(first_page, 1)
-            total_page = int(math.ceil(c_info['house_available']/20.0))
-            
-            self.session.add(job)
-            for i in range(total_page-1):
-                self.session.add(CommunityJobLJ(community, i+2, self.current_batch))
-            
-            community.last_batch_number = self.current_batch
-        except Exception:
-            self.session.rollback()
-            raise
-        else:
-            self.session.commit()
+        
+        job = CommunityJobLJ(community, 1, self.current_batch)
+        first_page = job.get_web_page(cache=True)
+        c_info, house_ids = community.parse_page(first_page, 1)
+        total_page = int(math.ceil(c_info['house_available']/20.0))
+        
+        self.session.add(job)
+        for i in range(total_page-1):
+            self.session.add(CommunityJobLJ(community, i+2, self.current_batch))
+        
+        community.last_batch_number = self.current_batch
+        time.sleep(self.interval_time)
 
 def run():
     try:

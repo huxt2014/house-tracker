@@ -23,7 +23,7 @@ from sqlalchemy.orm.collections import InstrumentedList
 __all__ = ['District', 'Community', 'CommunityLJ', 'CommunityFD', 'HouseLJ',
            'CommunityRecordLJ', 'HouseRecordLJ', 'PresalePermit', 'Job', 
            'DistrictJob', 'CommunityJobFD', 'CommunityJobLJ', 'PresaleJob',
-           'HouseJobLJ']
+           'HouseJobLJ', 'Area']
 
 logger = logging.getLogger(__name__)
 Base = declarative_base()
@@ -124,16 +124,27 @@ class District(BaseMixin, Base):
             raise Exception('parse error')
         
         return community_list, total_page
-        
+
+class Area(BaseMixin, Base):
+    __tablename__ = 'area'
+    
+    name = Column(VARCHAR(64))
+    district_id = Column(INTEGER, ForeignKey("district.id"))
+    
+    district = relationship('District')
+    
+
 class Community(BaseMixin, Base):
     __tablename__ = 'community'
     
     district_id = Column(INTEGER, ForeignKey("district.id"))
+    area_id = Column(INTEGER, ForeignKey('area.id'))
     outer_id = Column(VARCHAR(128))
     name = Column(VARCHAR(64), nullable=False)
-    area = Column(VARCHAR(32))
+    area_tmp = Column('area',VARCHAR(32))
     type = Column(VARCHAR(64), nullable=False)
     # jobs=relationship
+    area = relationship('Area', foreign_keys=area_id)
     
     __mapper_args__ = {
         'polymorphic_on': type,
@@ -156,6 +167,10 @@ class CommunityLJ(Community):
     __mapper_args__ = {
         'polymorphic_identity': 'lianjia',
         }
+    
+    def __init__(self, name, outer_id, area):
+        Community.__init__(self, name=name, outer_id=outer_id,
+                           area=area, district=area.district)
     
     def __str__(self):
         return self.name
@@ -361,7 +376,6 @@ class HouseLJ(BaseMixin, Base):
         h_info = {}
         house_info_tag = soup.find('div', class_='houseInfo')
         around_info_tag = soup.find('table', class_='aroundInfo')
-        view_tag = soup.find('div', string=u'近7天带看次数').parent
         
         h_info['price'] = int(house_info_tag.div.div.get_text()
                                   .replace(u'万', ''))
@@ -369,8 +383,6 @@ class HouseLJ(BaseMixin, Base):
                               .get_text())
         h_info['area'] = float(house_info_tag.find('div', class_='area')
                                    .div.get_text().replace(u'平', ''))
-        h_info['view_last_week'] = int(view_tag.find(class_='count').text)
-        h_info['view_last_month'] = int(view_tag.find('span').text)
         year_string = (around_info_tag.find('span', string=re.compile(u'年代'))
                        .parent.text.split(u'：')[1].strip())
         result = re.match('(\d{4})', year_string)
@@ -382,6 +394,17 @@ class HouseLJ(BaseMixin, Base):
                                                 string=re.compile(u'楼层'))
                            .parent.text.split(u'：')[1].strip())
         
+        tmp_tag = soup.find('div', string=u'近7天带看次数')
+        if tmp_tag:
+            view_tag = tmp_tag.parent
+            h_info['view_last_week'] = int(view_tag.find(class_='count').text)
+            h_info['view_last_month'] = int(view_tag.find('span').text)
+        else:
+            # if house is not available now, the following information will
+            # not display.
+            h_info['view_last_week'] = None
+            h_info['view_last_month'] = None
+            
         return h_info
 
 class CommunityRecordLJ(BaseMixin, Base):
@@ -487,7 +510,8 @@ class Job(BaseMixin, Base):
             session.rollback()
             (session.query(Job)
                     .filter_by(id=self.id)
-                    .update({Job.status: 'failed'}))
+                    .update({Job.status: 'failed',
+                             Job.target_uri: self.web_uri()}))
             raise
         else:
             self.status='succeed'

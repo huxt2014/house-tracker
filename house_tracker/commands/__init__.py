@@ -24,11 +24,10 @@ class Command():
         
         self.parser = argparse.ArgumentParser()
         self.parser.add_argument('-d', '--debug', action='store_true')
-        self.parser.add_argument('--new-batch', action='store_true')
         self.parser.add_argument('--clean-cache', action='store_true')
         
-        if hasattr(self, 'add_parse_arg'):
-            self.add_parse_arg()
+        if hasattr(self, 'config_parser'):
+            self.config_parser()
             
         self.args = self.parser.parse_args()
         if self.args.debug:
