@@ -160,6 +160,7 @@ class CommunityLJ(Community):
     sold_last_season = Column(INTEGER)
     view_last_month = Column(INTEGER)
     last_batch_number = Column(INTEGER)
+    valid_average_price = Column(INTEGER)
     # houses=relationship
     # community_records=relationship
     # house_records = relationship
@@ -194,8 +195,8 @@ class CommunityLJ(Community):
             on_page = int(soup.find('div', class_='page-box house-lst-page-box')
                           .find('a', class_='on').get_text())
             if page_number != on_page:
-                raise Exception('target page %s, but get page %s', page_number,
-                                on_page)
+                raise Exception('target page %s, but get page %s' % ( 
+                                            page_number, on_page))
             
             # get community info
             if on_page == 1:
@@ -429,13 +430,20 @@ class CommunityRecordLJ(BaseMixin, Base):
     new_number = Column(INTEGER)
     miss_number = Column(INTEGER)
     view_last_week = Column(INTEGER)
+    valid_average_price = Column(INTEGER)
+    average_price_change = Column(INTEGER)
     
     batch_number = Column(INTEGER, nullable=False)
     
     community = relationship('Community', 
                              backref=backref('community_records',
                                              order_by=view_last_month))
-
+    
+    house_records = relationship('HouseRecordLJ',
+                                 primaryjoin='(CommunityRecordLJ.community_id==foreign(HouseRecordLJ.community_id)'
+                                             ')&(CommunityRecordLJ.batch_number==HouseRecordLJ.batch_number)',
+                                 )
+    
 class HouseRecordLJ(BaseMixin, Base):
     __tablename__ = 'house_record'
     

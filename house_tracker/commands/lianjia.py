@@ -6,6 +6,7 @@ import logging
 import requests
 
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from . import Command, confirm_result
 from house_tracker.models import *
@@ -164,12 +165,23 @@ class BatchJob(Command):
                                    'community_id': community.id}
                             ).fetchall()[0]
         c_record = (session.query(CommunityRecordLJ)
+                           .options(joinedload('house_records').joinedload('house'),
+                                    joinedload('community'))
                            .filter_by(batch_number=self.current_batch,
                                       community_id=community.id)
                            .one() )
         (c_record.rise_number, c_record.reduce_number, 
          c_record.valid_unchange_number, c_record.new_number, 
          c_record.miss_number, c_record.view_last_week) = rs
+         
+        # get average price
+        house_avg_prices = [house_record.price * 10000/house_record.house.area
+                            for house_record in c_record.house_records
+                            if (house_record.view_last_week > 0
+                                or house_record.view_last_month > 0)]
+        if house_avg_prices:
+            c_record.valid_average_price = int(sum(house_avg_prices)/len(house_avg_prices))
+            c_record.community.valid_average_price = c_record.valid_average_price 
         
         logger.info('finish')
         session.commit()
