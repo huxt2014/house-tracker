@@ -191,6 +191,8 @@ class CommunityLJ(Community):
         soup = BeautifulSoup(content, 'html.parser')
         
         try:
+            if content.find(u'暂时没有找到符合条件的内容') > 0:
+                return None, None
             # check page index
             on_page = int(soup.find('div', class_='page-box house-lst-page-box')
                           .find('a', class_='on').get_text())
@@ -205,8 +207,8 @@ class CommunityLJ(Community):
                 try:
                     c_info['average_price'] = int(li_tags[0].find('strong')
                                                   .get_text())
-                except ValueError:
-                    if average_price == u'暂无均价':
+                except AttributeError:
+                    if li_tags[0].find('span', class_='newstrong').get_text() == u'暂无均价':
                         c_info['average_price'] = None
                     else:
                         msg = ('parse community average price failed: '
@@ -500,6 +502,8 @@ class Job(BaseMixin, Base):
         'polymorphic_identity': 'job',
         }
     
+    use_cached = False
+    
     def start(self, session, auto_commit=True, clean_cache=False, 
               interval_time=None, **kwargs):
         if clean_cache:
@@ -526,7 +530,7 @@ class Job(BaseMixin, Base):
         finally:
             if auto_commit:
                 session.commit()
-            if interval_time:
+            if not self.use_cached and interval_time:
                 time.sleep(interval_time)
         
     def inner_start(self, session, **kwargs):
@@ -592,6 +596,8 @@ class Job(BaseMixin, Base):
             
         with open(file_path, 'rb') as f:
             content = f.read().decode('utf-8')
+        
+        self.use_cached = True
         
         return content
     

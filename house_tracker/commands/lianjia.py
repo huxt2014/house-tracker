@@ -183,6 +183,17 @@ class BatchJob(Command):
             c_record.valid_average_price = int(sum(house_avg_prices)/len(house_avg_prices))
             c_record.community.valid_average_price = c_record.valid_average_price 
         
+        # get average price change
+        last_batch_record = (session.query(CommunityRecordLJ)
+                                    .filter_by(community_id=c_record.community_id,
+                                               batch_number=c_record.batch_number-1)
+                                    .first()  )
+        if (last_batch_record
+            and c_record.valid_average_price is not None
+            and last_batch_record.valid_average_price is not None):
+            c_record.average_price_change=(c_record.valid_average_price-
+                                           last_batch_record.valid_average_price)
+        
         logger.info('finish')
         session.commit()
     
@@ -190,16 +201,21 @@ class BatchJob(Command):
         logger.info('initial community batch jobs: %s -> %s', 
                     community.id, community.outer_id)
         
+        community.last_batch_number = self.current_batch
         job = CommunityJobLJ(community, 1, self.current_batch)
         first_page = job.get_web_page(cache=True)
         c_info, house_ids = community.parse_page(first_page, 1)
+        if not house_ids:
+            logger.warn('no house found')
+            job.community = None
+            session.expunge(job)
+            return
         total_page = int(math.ceil(c_info['house_available']/20.0))
         
         self.session.add(job)
         for i in range(total_page-1):
             self.session.add(CommunityJobLJ(community, i+2, self.current_batch))
         
-        community.last_batch_number = self.current_batch
         time.sleep(self.interval_time)
 
 def run():
