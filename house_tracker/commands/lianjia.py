@@ -178,7 +178,9 @@ class BatchJob(Command):
         house_avg_prices = [house_record.price * 10000/house_record.house.area
                             for house_record in c_record.house_records
                             if (house_record.view_last_week > 0
-                                or house_record.view_last_month > 0)]
+                                or house_record.view_last_month > 0
+                                or house_record.price_change
+                                or house_record.house.new)]
         if house_avg_prices:
             c_record.valid_average_price = int(sum(house_avg_prices)/len(house_avg_prices))
             c_record.community.valid_average_price = c_record.valid_average_price 
@@ -208,7 +210,7 @@ class BatchJob(Command):
         if not house_ids:
             logger.warn('no house found')
             job.community = None
-            session.expunge(job)
+            self.session.expunge(job)
             return
         total_page = int(math.ceil(c_info['house_available']/20.0))
         
@@ -216,7 +218,8 @@ class BatchJob(Command):
         for i in range(total_page-1):
             self.session.add(CommunityJobLJ(community, i+2, self.current_batch))
         
-        time.sleep(self.interval_time)
+        if not job.use_cached:
+            time.sleep(self.interval_time)
 
 def run():
     try:

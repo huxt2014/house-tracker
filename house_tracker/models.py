@@ -564,13 +564,15 @@ class Job(BaseMixin, Base):
         while True:
             try:
                 try_times += 1
-                res = requests.get(url)
-            except requests.exceptions.RequestException as e:
-                logger.exception(e)
+                res = requests.get(url, timeout=3)
+            except (requests.exceptions.RequestException,
+                    requests.exceptions.Timeout) as e:
                 if try_times <3:
+                    logger.warn(e)
                     logger.warn('%s-th try failed: %s.', try_times, url)
                     time.sleep(3)
                 else:
+                    logger.exception(e)
                     logger.error('get html failed: %s', url)
                     raise Exception('http request error: %s', url)
             else:
