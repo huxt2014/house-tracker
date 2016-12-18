@@ -1,10 +1,13 @@
+# coding=utf-8
 
+import os
 import sys
 import argparse
 import logging.config
 from datetime import datetime, timedelta
 
 from sqlalchemy import or_, and_
+from sqlalchemy.orm import joinedload
 from sqlalchemy.sql import func
 from sqlalchemy.sql.expression import case
 import alembic.config, alembic.util
@@ -139,6 +142,40 @@ class RunServer(Command):
     
     def __init__(self):
         print 'runserver'
+        
+class Dump(Command):
+    @staticmethod
+    def register_subcommand(subparsers):
+        subparser = subparsers.add_parser('dump')
+        subparser.add_argument('--fangdi', action='store_true')
+        subparser.add_argument('-t', '--target', action='store', nargs='?')
+        
+    def start(self):
+        session = get_session()
+        path = self.cmd_args.target or '.'
+        path = os.path.abspath(os.path.realpath(path))
+        if self.cmd_args.fangdi:
+            cs = (session.query(ht_models.CommunityFD)
+                  .options(joinedload('district'))
+                  .filter_by(track_presale=True)
+                  .order_by(ht_models.CommunityFD.created_at)
+                  .all())
+            self.dump_fangdi(cs, os.path.join(path, 'fangdi.cvs'))
+            
+        
+    def dump_fangdi(self, communities, path):
+        with open(path, 'wb') as f:
+            content = []
+            content.append(u'编号,区县,名称,位置,公司,收录时间,链接\r\n')
+            for c in communities:
+                content.append('%s,%s,%s,%s,%s,%s,%s\r\n' % (
+                                c.id,c.district.name, c.name, c.location,
+                                c.company,c.created_at.strftime('%Y%m%d'),
+                                c.community_url()))
+            for l in content:
+                f.write(l.encode('utf8'))
+        print path
+        
 
 def confirm_result():
     session = get_session()
