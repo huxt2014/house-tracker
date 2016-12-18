@@ -1,4 +1,5 @@
 
+import sys
 import argparse
 import logging.config
 from datetime import datetime, timedelta
@@ -6,40 +7,141 @@ from datetime import datetime, timedelta
 from sqlalchemy import or_, and_
 from sqlalchemy.sql import func
 from sqlalchemy.sql.expression import case
+import alembic.config, alembic.util
 
+import house_tracker.models as ht_models
+from house_tracker.config import Config
 from house_tracker.exceptions import ConfigError
-from house_tracker.utils import db
-
-
-
+from house_tracker.utils.db import get_database_url, get_session
+from .workers import InitWorker, StartWorker
 
 import house_tracker_settings as settings
 logger = logging.getLogger(__name__)
 
-class Command():
+
+class FactoryMeta(type):
+    """
+    """
+    def __call__(cls, *args, **kwargs):
+        if kwargs.get('argv'):
+            cmd_args = FactoryMeta.parser.parse_args(kwargs.pop('argv'))
+        else:
+            cmd_args = FactoryMeta.parser.parse_args()
+        
+        instance = type.__call__(
+                        FactoryMeta.subcommand_map[cmd_args.subcommand],
+                        *args, cmd_args=cmd_args, config = Config(), **kwargs)
+        return instance
     
-    def __init__(self, debug=False):
-        check_config()
-        logging.config.dictConfig(settings.logger_config)
+    def __init__(cls, classname, superclasses, attributedict):
+        type.__init__(cls, classname, superclasses, attributedict)
+        if 'register_subcommand' in attributedict:
+            choices = FactoryMeta.subparsers.choices
+            len_tmp = len(choices)
+            cls.register_subcommand(FactoryMeta.subparsers)
+            if len(choices) - len_tmp != 1:
+                raise Exception('register_subcommand should add an subcommand.')
+            FactoryMeta.subcommand_map[choices.keys()[-1]] = cls
         
-        self.parser = argparse.ArgumentParser()
-        self.parser.add_argument('-d', '--debug', action='store_true')
-        self.parser.add_argument('--clean-cache', action='store_true')
-        
-        if hasattr(self, 'config_parser'):
-            self.config_parser()
-            
-        self.args = self.parser.parse_args()
-        if self.args.debug:
+        if 'config_parser' in attributedict:
+            cls.config_parser(FactoryMeta.parser)
+    
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest='subcommand')
+    subcommand_map = {}
+
+
+class Command():
+    __metaclass__ = FactoryMeta
+    
+    @staticmethod
+    def config_parser(parser):
+        parser.add_argument('-d', '--debug', action='store_true')
+    
+    def __init__(self, cmd_args=None, config=None):
+        self.cmd_args = cmd_args
+        self.config=config
+        if self.cmd_args.debug:
             logging.getLogger().setLevel(logging.DEBUG)
-        
-    def run(self):
+
+    def start(self):
         raise NotImplementedError
 
 
+class Migrate(Command):
+    @staticmethod
+    def register_subcommand(subparsers):
+        alembic_cmd = alembic.config.CommandLine()
+        subparsers._name_parser_map['migrate'] = alembic_cmd.parser
+    
+    def start(self):
+        parser = Command.subparsers.choices['migrate']
+        if not hasattr(self.cmd_args, "cmd"):
+            # see http://bugs.python.org/issue9253, argparse
+            # behavior changed incompatibly in py3.3
+            parser.error("too few arguments")
+        else:
+            alembic_cfg = alembic.config.Config()
+            alembic_cfg.set_main_option("script_location", 
+                                        "house_tracker:migrations")
+            alembic_cfg.set_main_option("sqlalchemy.url", get_database_url())
+            
+            fn, positional, kwarg = self.cmd_args.cmd
+            try:
+                fn(alembic_cfg,
+                   *[getattr(self.cmd_args, k) for k in positional],
+                   **dict((k, getattr(self.cmd_args, k)) for k in kwarg)
+                   )
+            except alembic.util.CommandError as e:
+                if self.cmd_args.raiseerr:
+                    raise
+                else:
+                    alembic.util.err(str(e))
+
+class BatchJobCommand(Command):
+    def __init__(self, cmd_args=None, config=None):
+        Command.__init__(self, cmd_args=cmd_args, config=config)
+        
+        self.batchjob_args = {'cache_dir':self.config.data_dir,
+                              'interval_time': self.config.interval_time,
+                              'clean_cache': self.cmd_args.clean_cache,
+                              }
+
+class InitBatchJob(BatchJobCommand):
+    @staticmethod
+    def register_subcommand(subparsers):
+        subparser = subparsers.add_parser('init')
+        subparser.add_argument('--clean-cache', action='store_true')
+        
+    def start(self):
+        worker = InitWorker(ht_models.BatchJobFD, get_session(),
+                            batchjob_args=self.batchjob_args)
+        worker.start()
+        worker.join()
+        
+    
+class StartBatchJob(BatchJobCommand):
+    @staticmethod
+    def register_subcommand(subparsers):
+        subparser = subparsers.add_parser('start')
+        subparser.add_argument('--clean-cache', action='store_true')
+    
+    def start(self):
+        worker = StartWorker(ht_models.BatchJobFD, get_session(),
+                             batchjob_args=self.batchjob_args)
+        worker.start()
+        worker.join()
+
+class RunServer(Command):
+    @staticmethod
+    def register_subcommand(subparsers):
+        subparsers.add_parser('runserver')
+    
+    def __init__(self):
+        print 'runserver'
 
 def confirm_result():
-    session = db.get_session()
+    session = get_session()
     # check price change
     sql = """select sum(case when T1.price > T2.price then 1 else 0 end) as rise_number,
                     sum(case when T1.price < T2.price then 1 else 0 end) as reduce_number,
@@ -139,14 +241,5 @@ def confirm_result():
     logger.info('confirm CommunityRecord finish.')
         
 
-def check_config():
-    for name in ('log_dir', 'data_dir', 'logger_config', 'database'):
-        if not hasattr(settings, name):
-            raise ConfigError('%s missing in setting file.' % name)
-    
-    for name in ('driver', 'host', 'name', 'user', 'password'):
-        if not name in settings.database.keys():
-            raise ConfigError('database server configure error: %s missing' % 
-                              name)
 
     

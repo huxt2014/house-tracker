@@ -18,7 +18,8 @@ from sqlalchemy.dialects.mysql import (VARCHAR, INTEGER, BOOLEAN, DATETIME,
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy.ext.declarative import (
         declarative_base, declared_attr, DeclarativeMeta)
-from sqlalchemy.orm.collections import InstrumentedList
+
+from house_tracker.exceptions import JobError, BatchJobError
 
 
 logger = logging.getLogger(__name__)
@@ -61,17 +62,8 @@ class District(BaseMixin, Base):
                 '&houseArea=0&averagePrice=0&selState=&selCircle=0'
                 ) % (page_num, self.outer_id_fd)
                 
-    def init_batch_jobs(self, session, batch_number, **kwargs):
-        job = DistrictJob(self, 1, batch_number)
-        session.add(job)
-        content = job.get_web_page(cached=True)
-        community_list, total_page = job.district.parse_html(content, 1)
-        # add district job for the rest pages
-        for i in range(total_page-1):
-            session.add(DistrictJob(self, i+2, batch_number))
-        job.start(session, auto_commit=False)
-                   
-    def parse_html(self, content, page_index):
+    
+    def parse_fd_html(self, content, page_index):
         soup = BeautifulSoup(content, 'html.parser')
         community_list = []
         total_page = None
@@ -207,7 +199,7 @@ class Community(BaseMixin, Base):
     area_id = Column(INTEGER, ForeignKey('area.id'))
     outer_id = Column(VARCHAR(128))
     name = Column(VARCHAR(64), nullable=False)
-    area_tmp = Column('area',VARCHAR(32))
+    area_name = Column(VARCHAR(64))
     type = Column(VARCHAR(64), nullable=False)
     # jobs=relationship
     area = relationship('Area', foreign_keys=area_id)
@@ -326,9 +318,6 @@ class CommunityFD(Community):
         
     @property
     def tmp_id(self):
-        return self.generate_tmp_id()
-    
-    def generate_tmp_id(self):
         today = date.today().isoformat().replace('-0', '-')
         tail = random.randint(1, 99)
         tmp_id= ('%s|%s|%s' % (self.outer_id, today, tail))
@@ -353,7 +342,7 @@ class CommunityFD(Community):
             except Exception as e:
                 # date may be null
                 logger.warn('%s get date failed: %s', self.id, e.__str__())
-                sale_date=None
+                sale_date=date.today()
                 
             try:
                 status = tds[7].get_text()
@@ -395,7 +384,7 @@ class CommunityFD(Community):
         
         # get area
         tds = trs[1].find_all('td', recursive=False)
-        c_info['area'] = tds[3].get_text()
+        c_info['area_name'] = tds[3].get_text()
         
         # get company
         tds = trs[2].find_all('td', recursive=False)
@@ -537,7 +526,8 @@ class HouseRecordLJ(BaseMixin, Base):
         for key, value in kwargs.iteritems():
             if hasattr(self, key):
                 setattr(self, key, value)
-    
+
+
 class PresalePermit(BaseMixin, Base):
     __tablename__ = 'presale_permit'
     
@@ -553,15 +543,144 @@ class PresalePermit(BaseMixin, Base):
     total_area = Column(FLOAT)
     normal_area = Column(FLOAT)
     status = Column(VARCHAR(64))
-    
-class Job(BaseMixin, Base):
-    __tablename__ = 'job'
+
+class BatchJob(BaseMixin, Base):
+    __tablename__ = 'batch_job'
     
     batch_number = Column(INTEGER, nullable=False)
+    status = Column(VARCHAR(64))
+    type = Column(VARCHAR(64), nullable=False)
+    
+    jobs_unsuccessful = relationship('Job', foreign_keys='Job.batch_job_id',
+                                     primaryjoin="(BatchJob.id==Job.batch_job_id)"
+                                     "&(Job.status!='succeed')")
+    
+    __mapper_args__ = {
+        'polymorphic_on': type,
+        'polymorphic_identity': 'batch_job',
+    }
+    
+    def __init__(self,  batch_number):
+        '''
+        '''
+        self.batch_number = batch_number
+        self.status = 'ready'
+            
+    def before_act(self, **kwargs):
+        self.cache_dir = os.path.join(kwargs.pop('cache_dir', '/tmp'),
+                                       self.type, str(self.batch_number))
+        if not os.path.isdir(self.cache_dir):
+            os.makedirs(self.cache_dir)
+            
+        self.job_args = {'interval_time': kwargs.get('interval_time'),
+                         'clean_cache': kwargs.get('clean_cache'),
+                         }
+        
+    def initial(self):
+        raise NotImplementedError
+    
+    def start(self):
+        raise NotImplementedError
+    
+class BatchJobFD(BatchJob):
+    
+    __mapper_args__ = {
+        'polymorphic_identity': 'batch_job_fd',
+    }
+    
+    def __str__(self):
+        return '%s-th batch job for fangdi.com' % self.batch_number
+    
+    def initial(self, session, **kwargs):
+        self.before_act(**kwargs)
+        
+        districts = session.query(District).all()
+        try:
+            for d in districts:
+                job = DistrictJob(d, 1, self)
+                session.add(job)
+                first_page = job.get_web_page(cache=True)
+                cs, total_page = job.district.parse_fd_html(first_page, 1)
+                for i in range(total_page-1):
+                    session.add(DistrictJob(d, i+2, self))
+        except Exception:
+            session.rollback()
+            raise
+        else:
+            session.commit()
+            
+    def start(self, session, **kwargs):
+        self.before_act(**kwargs)
+        
+        c_set = (session.query(CommunityFD.outer_id, CommunityFD.track_presale)
+                 .all() )
+        notrack_outer_ids = set(c.outer_id for c in c_set
+                                if not c.track_presale)
+        
+        (session.query(DistrictJob)
+         .filter_by(batch_job_id=self.id, status='failed')
+         .update({Job.status: 'retry'}) )
+        (session.query(CommunityJobFD)
+         .filter_by(batch_job_id=self.id, status='failed')
+         .update({Job.status: 'retry'}) )
+        (session.query(PresaleJob)
+         .filter_by(batch_job_id=self.id, status='failed')
+         .update({Job.status: 'retry'}) )
+        try:
+            d_jobs = (session.query(DistrictJob)
+                      .filter_by(batch_job_id=self.id)
+                      .filter(Job.status.in_(('ready', 'retry')))
+                      .all() )
+            for job in d_jobs:
+                job.start(session, notrack_outer_ids=notrack_outer_ids,
+                          **self.job_args)
+                
+            c_jobs = (session.query(CommunityJobFD)
+                      .filter_by(batch_job_id=self.id)
+                      .filter(Job.status.in_(('ready', 'retry')))
+                      .all() )
+            for job in c_jobs:
+                job.start(session, **self.job_args)
+                
+            p_jobs = (session.query(PresaleJob)
+                      .filter_by(batch_job_id=self.id)
+                      .filter(Job.status.in_(('ready', 'retry')))
+                      .all() )
+            for job in p_jobs:
+                job.start(session, **self.job_args)
+                
+        except Exception as e:
+            logger.exception(e)
+            logger.error('%s failed', self)
+        else:
+            logger.info('%s finish: %s community jobs.', self, len(c_jobs))
+            
+class BatchJobLJ(BatchJob):
+    __mapper_args__ = {
+        'polymorphic_identity': 'batch_job_lj',
+    }
+    
+class Job(BaseMixin, Base):
+    '''
+    The following method/attribute should be overrided:
+        inner_start
+        web_uri 
+    The following methd/attribute can be overrided:
+        web_encode
+        disk_uri (for disk cache)
+    '''
+    __tablename__ = 'job'
+    
+    batch_job_id = Column(INTEGER, ForeignKey('batch_job.id'))
+    
+    batch_number = Column(INTEGER)
     status = Column(VARCHAR(64), default='ready')
     target_uri = Column(VARCHAR(1024))
     parameters = Column(PickleType, default={})
     type = Column(VARCHAR(64))
+    
+    batch_job = relationship(BatchJob, foreign_keys=batch_job_id,
+                             backref=backref('jobs'))
     
     __mapper_args__ = {
         'polymorphic_on': type,
@@ -600,10 +719,8 @@ class Job(BaseMixin, Base):
                 time.sleep(interval_time)
         
     def inner_start(self, session, **kwargs):
-        """ Called by self.start. If any exception throw out,
-        session.expunge_all will be called by self.start, and changes that 
-        happen in inner_start on persistent objects and already flush or commit
-        will not rollback. """
+        """ Called by self.start. If any exception throw out, transaction will
+        roll back, and job status is set as failed"""
         
         raise NotImplementedError
     
@@ -677,48 +794,50 @@ class Job(BaseMixin, Base):
     
     @property
     def cache_file_path(self):
-        cache_dir = os.getenv('HOUSE_TRACKER_CACHE_DIR')
+        '''return cache_dir/disk_uri. cache_dir is retrieved from environ,
+        disk_uri is got by method self.disk_uri.
+        '''
         if not hasattr(self, '_cache_file_path'):
-            if not cache_dir or not hasattr(self, 'disk_uri'):
+            if not hasattr(self, 'disk_uri'):
                 self._cache_file_path = None
             else:
-                self._cache_file_path = os.path.join(cache_dir,
-                                                     self.disk_uri())        
+                cache_dir = (self.batch_job.cache_dir if self.batch_job
+                             else '/tmp')
+                self._cache_file_path = os.path.join(cache_dir, self.disk_uri())        
         return self._cache_file_path
     
 class DistrictJob(Job):
 
     district_id = Column(INTEGER, ForeignKey('district.id'))
-    district = relationship('District', backref=backref('jobs'),
-                            foreign_keys=district_id)
+    district = relationship('District', foreign_keys=district_id)
     __mapper_args__ = {
         'polymorphic_identity': 'district_job',
         }
     
-    def __init__(self, district, page, batch_number):
-        Job.__init__(self, district=district, batch_number=batch_number,
-                     parameters={'page': 1})
+    def __init__(self, district, page, batch_job):
+        Job.__init__(self, district=district, batch_job=batch_job,
+                     parameters={'page': page})
         
-    def inner_start(self, session, **kwargs):
+    def inner_start(self, session, notrack_outer_ids=None):
         page_index = self.parameters['page']
         content = self.get_web_page()
-        community_list, total_page = self.district.parse_html(content, 
-                                                              page_index)
+        community_list, total_page = self.district.parse_fd_html(
+                                                       content, page_index)
         # add community job
         for c_info in community_list:
+            if c_info['outer_id'] in notrack_outer_ids:
+                continue
             community = (session.query(CommunityFD)
                                 .filter_by(outer_id=c_info['outer_id'])
                                 .first())
             if not community:
                 community = CommunityFD(district=self.district,
-                                        track_presale=True,
                                         **c_info)
                 session.add(community)
+                session.add(CommunityJobFD(community, self.batch_job))
             
-            if community.track_presale:
-                session.add(PresaleJob(batch_number=self.batch_number,
-                                       community=community))
-        self.status = 'succeed'
+            session.add(PresaleJob(community, self.batch_job))
+        
     
     def web_uri(self):
         page_index = self.parameters['page']
@@ -726,6 +845,11 @@ class DistrictJob(Job):
     
     def web_encode(self):
         return 'gbk'
+    
+    def disk_uri(self):
+        return 'fd-district-%s-%s-%s.html' % (
+                    self.district.id, self.district.outer_id_fd,
+                    self.parameters['page'])
     
 class CommunityJob(Job):
     community_id = Column(INTEGER, ForeignKey('community.id'))
@@ -741,21 +865,21 @@ class CommunityJobFD(CommunityJob):
         'polymorphic_identity': 'community_job_fangdi',
         }
     
+    def __init__(self, community, batch_job=None):
+        Job.__init__(self, community=community, batch_job=batch_job)
+    
     def inner_start(self, session):    
-        self.target_url = self.community.community_url()
-        
-        res = http_request(self.target_url, 'get')
-        if res.status_code != 200:
-            logger.error('bad response: %s, %s', res.status_code, 
-                         self.target_url)
-            raise Exception
-        res.encoding = 'gbk'
-        c_info = self.community.parse_community_page(res.text)
+        content = self.get_web_page()
+        c_info = self.community.parse_community_page(content)
         
         for key, value in c_info.iteritems():
             setattr(self.community, key, value)
-        self.status = 'succeed'
-        
+    
+    def web_uri(self):
+        return self.community.community_url()
+    
+    def web_encode(self):
+        return 'gbk'
     
 class CommunityJobLJ(CommunityJob):
     __mapper_args__ = {
@@ -831,31 +955,30 @@ class HouseJobLJ(CommunityJob):
         return self.house.download_url()
     
             
-class PresaleJob(CommunityJobFD):
+class PresaleJob(CommunityJob):
     
     __mapper_args__ = {
         'polymorphic_identity': 'presale_job',
         }
     
+    def __init__(self, community, batch_job):
+        Job.__init__(self, community=community, batch_job=batch_job)
+    
     def inner_start(self, session):
-        self.target_url = self.community.presale_url()
-        res = http_request(self.target_url, 'get')
-        if res.status_code != 200:
-            logger.error('bad response: %s, %s', res.status_code, 
-                         self.target_url)
-            raise Exception
-        res.encoding = 'gbk'
-        presales = self.community.parse_presale_page(res.text)
+        content = self.get_web_page()
+        presales = self.community.parse_presale_page(content)
+        old_presales = set(p.serial_number for p in self.community.presales)
         
         for presale_info in presales:
-            presale = (session.query(PresalePermit)
-                              .filter_by(community_id=self.community.id,
-                                         serial_number=presale_info['serial_number'])
-                              .first())
-            if not presale:
+            if not presale_info['serial_number'] in old_presales:
                 presale_info['community_id'] = self.community.id
                 session.add(PresalePermit(**presale_info))
-        self.status='succeed'
+        
+    def web_uri(self):
+        return self.community.presale_url()
+    
+    def web_encode(self):
+        return 'gbk'
 
 __all__ = [key for key in list(globals().keys())
            if isinstance(globals()[key], DeclarativeMeta)]    
