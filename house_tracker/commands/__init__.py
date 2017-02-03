@@ -101,39 +101,61 @@ class Migrate(Command):
                 else:
                     alembic.util.err(str(e))
 
+
 class BatchJobCommand(Command):
     def __init__(self, cmd_args=None, config=None):
         Command.__init__(self, cmd_args=cmd_args, config=config)
         
-        self.batchjob_args = {'cache_dir':self.config.data_dir,
-                              'interval_time': self.config.interval_time,
-                              'clean_cache': self.cmd_args.clean_cache,
-                              }
+        self.batch_job_args = {'cache_dir':self.config.data_dir,
+                               'interval_time': self.config.interval_time,
+                               'clean_cache': self.cmd_args.clean_cache,
+                               }
+        self.targets = []
+        if self.cmd_args.fangdi:
+            self.targets.append(ht_models.BatchJobFD)
+        if self.cmd_args.lianjia:
+            self.targets.append(ht_models.BatchJobLJ)
+
 
 class InitBatchJob(BatchJobCommand):
     @staticmethod
     def register_subcommand(subparsers):
         subparser = subparsers.add_parser('init')
         subparser.add_argument('--clean-cache', action='store_true')
+        subparser.add_argument('--fangdi', action='store_true')
+        subparser.add_argument('--lianjia', action='store_true')
         
     def start(self):
-        worker = InitWorker(ht_models.BatchJobFD, get_session(),
-                            batchjob_args=self.batchjob_args)
-        worker.start()
-        worker.join()
+        workers = []
+        for cls in self.targets:
+            worker = InitWorker(cls, get_session(),
+                                batch_job_args=self.batch_job_args)
+            worker.start()
+            workers.append(worker)
         
-    
+        for worker in workers:
+            worker.join()
+
+
 class StartBatchJob(BatchJobCommand):
     @staticmethod
     def register_subcommand(subparsers):
         subparser = subparsers.add_parser('start')
         subparser.add_argument('--clean-cache', action='store_true')
+        subparser.add_argument('--fangdi', action='store_true')
+        subparser.add_argument('--lianjia', action='store_true')
     
     def start(self):
-        worker = StartWorker(ht_models.BatchJobFD, get_session(),
-                             batchjob_args=self.batchjob_args)
-        worker.start()
-        worker.join()
+        workers = []
+        for cls in self.targets:
+            worker = StartWorker(cls, get_session(),
+                                 batch_job_args=self.batch_job_args)
+            worker.start()
+            workers.append(worker)
+        
+        for worker in workers:
+            worker.join()
+
 
 class RunServer(Command):
     @staticmethod
@@ -142,7 +164,8 @@ class RunServer(Command):
     
     def __init__(self):
         print 'runserver'
-        
+
+
 class Dump(Command):
     @staticmethod
     def register_subcommand(subparsers):
@@ -160,123 +183,18 @@ class Dump(Command):
                   .filter_by(track_presale=True)
                   .order_by(ht_models.CommunityFD.created_at)
                   .all())
-            self.dump_fangdi(cs, os.path.join(path, 'fangdi.cvs'))
-            
-        
+            self.dump_fangdi(cs, os.path.join(path, 'fangdi.csv'))
+
     def dump_fangdi(self, communities, path):
         with open(path, 'wb') as f:
             content = []
             content.append(u'编号,区县,名称,位置,公司,收录时间,链接\r\n')
             for c in communities:
                 content.append('%s,%s,%s,%s,%s,%s,%s\r\n' % (
-                                c.id,c.district.name, c.name, c.location,
-                                c.company,c.created_at.strftime('%Y%m%d'),
+                                c.id,c.district.name, c.name.replace(',',';'),
+                                c.location, c.company,
+                                c.created_at.strftime('%Y%m%d'),
                                 c.community_url()))
             for l in content:
                 f.write(l.encode('utf8'))
         print path
-        
-
-def confirm_result():
-    session = get_session()
-    # check price change
-    sql = """select sum(case when T1.price > T2.price then 1 else 0 end) as rise_number,
-                    sum(case when T1.price < T2.price then 1 else 0 end) as reduce_number,
-                    sum(case when T1.price = T2.price
-                                  and (T1.view_last_week > 0 or T1.view_last_month > 0)
-                             then 1 else 0 end) as valid_unchange_number,
-                    count(*) as house_available
-             from house_record as T1 
-             left join house_record as T2
-               on T1.house_id = T2.house_id
-               and T2.create_week = :create_week -1
-             where T1.create_week = :create_week
-         """
-    h_record_join_aggr = session.execute(sql, {'create_week': week_number()}
-                                         ).first()
-    
-    h_record_aggr = (session
-                     .query(
-                        func.count(HouseRecord.id).label('house_available'),
-                        func.sum(case([(HouseRecord.price_change>0, 1)],
-                                      else_=0)).label('rise_number'),
-                        func.sum(case([(HouseRecord.price_change<0, 1)],
-                                      else_=0)).label('reduce_number'),
-                        func.sum(case([(and_(HouseRecord.price_change==0,
-                                             or_(HouseRecord.view_last_week>0,
-                                                 HouseRecord.view_last_month>0)),
-                                         1)],
-                                      else_=0)).label('valid_unchange_number'),
-                        func.sum(HouseRecord.view_last_week).label('view_last_week')
-                        )
-                     .filter_by(create_week=week_number())
-                     .one()
-                    )
-    
-    for key in ('rise_number', 'reduce_number', 'valid_unchange_number'):
-        try:
-            assert int(getattr(h_record_join_aggr, key)) == int(getattr(h_record_aggr, key))
-        except AssertionError:
-            logger.error('%s in HouseRecord wrong.' % key) 
-    logger.info('confirm rise_number, reduce_number, valid_unchange_number in '
-                'HouseRecord finish.')
-        
-    # check house.available, house,new
-    yesterday = (datetime.now() - timedelta(3)).strftime('%Y-%m-%d %H:%M:%S')
-    house_aggr = (session
-                  .query(func.sum(case([(House.created_at > yesterday, 1)],
-                                       else_=0)
-                                  ).label('create_number'),
-                         func.sum(case([(House.available, 1)],
-                                       else_=0)
-                                  ).label('house_available'),
-                         func.sum(case([(House.new, 1)],
-                                       else_=0)).label('new_number'),
-                         func.sum(case([(House.last_track_week==week_number()-1,
-                                         1)],
-                                       else_=0)).label('miss_number')
-                         )
-                  .one()
-                  )
-    
-    try:
-        assert int(house_aggr.create_number) == int(house_aggr.new_number)
-    except AssertionError:
-        logger.error('new_number in House wrong.')
-    try:
-        assert int(h_record_join_aggr.house_available) == int(house_aggr.house_available)
-    except AssertionError:
-        logger.error('house_available in House wrong.')
-    logger.info('confirm new_number, house_available in House finishi.')
-    
-    # check community record
-    c_record_aggr = (session
-                     .query(func.sum(CommunityRecord.house_available).label('house_available'),
-                            func.sum(CommunityRecord.rise_number).label('rise_number'),
-                            func.sum(CommunityRecord.reduce_number).label('reduce_number'),
-                            func.sum(CommunityRecord.valid_unchange_number).label('valid_unchange_number'),
-                            func.sum(CommunityRecord.new_number).label('new_number'),
-                            func.sum(CommunityRecord.miss_number).label('miss_number'),
-                            func.sum(CommunityRecord.view_last_week).label('view_last_week'),
-                            )
-                     .filter_by(create_week=week_number())
-                     .one()
-                     )
-    
-    for key in ('house_available', 'rise_number', 'reduce_number', 
-                'valid_unchange_number', 'view_last_week'):
-        try:
-            assert int(getattr(c_record_aggr, key)) == int(getattr(h_record_aggr, key))
-        except AssertionError:
-            logger.error('%s in CommunityRecord wrong' % key)
-            
-    for key in ('new_number', 'miss_number'):
-        try:
-            assert int(getattr(c_record_aggr, key) == getattr(house_aggr, key))
-        except AssertionError:
-            logger.error('%s in CommunityRecord wrong' % key)       
-    logger.info('confirm CommunityRecord finish.')
-        
-
-
-    

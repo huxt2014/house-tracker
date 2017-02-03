@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy import Column, ForeignKey, types, inspect
 from sqlalchemy.dialects.mysql import (VARCHAR, INTEGER, BOOLEAN, DATETIME, 
                                        FLOAT, DATE, TEXT)
-from sqlalchemy.orm import relationship, backref
+from sqlalchemy.orm import relationship, backref, joinedload
 from sqlalchemy.ext.declarative import (
         declarative_base, declared_attr, DeclarativeMeta)
 
@@ -25,11 +25,13 @@ from house_tracker.exceptions import JobError, BatchJobError
 logger = logging.getLogger(__name__)
 Base = declarative_base()
 
+
 class PickleType(types.PickleType):
     def __init__(self):
         types.PickleType.__init__(self, pickler=json)
         
     impl = TEXT
+
 
 class BaseMixin(object):
     id = Column(INTEGER, primary_key=True, autoincrement=True)
@@ -48,7 +50,8 @@ class BaseMixin(object):
             else:
                 out += '%s:%s ' % (c, v)
         return out.strip()
-    
+
+
 class District(BaseMixin, Base):
     __tablename__ = 'district'
     
@@ -61,12 +64,10 @@ class District(BaseMixin, Base):
                 '&Region_ID=&projectAdr=&projectName=&startCod=&buildingType=1'
                 '&houseArea=0&averagePrice=0&selState=&selCircle=0'
                 ) % (page_num, self.outer_id_fd)
-                
-    
+
     def parse_fd_html(self, content, page_index):
         soup = BeautifulSoup(content, 'html.parser')
         community_list = []
-        total_page = None
         
         for table in soup.find_all('table'):
             target_cols = table.tr.find_all('td', string=['项目地址', '所在区县'], 
@@ -113,6 +114,7 @@ class District(BaseMixin, Base):
         
         return community_list, total_page
 
+
 class Area(BaseMixin, Base):
     __tablename__ = 'area'
     
@@ -120,6 +122,7 @@ class Area(BaseMixin, Base):
     district_id = Column(INTEGER, ForeignKey("district.id"))
     
     district = relationship('District')
+
 
 class LandSoldRecord(BaseMixin, Base):
     __tablename__ = 'land_sold_record'
@@ -143,7 +146,7 @@ class LandSoldRecord(BaseMixin, Base):
     
     def parse_web_page(self, content):
         soup = BeautifulSoup(content, 'html.parser')
-        tag_text = soup.find('script', string= re.compile('data:')).text
+        tag_text = soup.find('script', string=re.compile('data:')).text
         left = tag_text.find('data:') + 5
         right = -1
         for i in range(4):
@@ -176,15 +179,18 @@ class Land(BaseMixin, Base):
         'polymorphic_identity': 'land',
         }
 
+
 class LandResidential(Land):
     __mapper_args__ = {
         'polymorphic_identity': 'residential',
         }
 
+
 class LandSemiResidential(Land):
     __mapper_args__ = {
         'polymorphic_identity': 'semi-residential',
         }
+
 
 class LandRelocation(Land):
     __mapper_args__ = {
@@ -210,7 +216,8 @@ class Community(BaseMixin, Base):
         }
 
     district = relationship('District')
-    
+
+
 class CommunityLJ(Community):
     
     average_price = Column(INTEGER)
@@ -266,11 +273,12 @@ class CommunityLJ(Community):
                     c_info['average_price'] = int(li_tags[0].find('strong')
                                                   .get_text())
                 except AttributeError:
-                    if li_tags[0].find('span', class_='newstrong').get_text() == u'暂无均价':
+                    if li_tags[0].find('span', class_='newstrong'
+                                       ).get_text() == u'暂无均价':
                         c_info['average_price'] = None
                     else:
                         msg = ('parse community average price failed: '
-                                '%s->%s.') % (community.id, community.outer_id)
+                               '%s->%s.') % (self.id, self.outer_id)
                         raise Exception(msg)
                 c_info['house_available'] = int(li_tags[2].find('strong')
                                                 .get_text())
@@ -377,7 +385,7 @@ class CommunityFD(Community):
             except Exception:
                 continue
         else:
-            raise Exception('parse error')
+            raise Exception('fangdi parse error: %s' % self.id)
         
         c_info = {}
         trs = table.find_all('tr', recursive=False)
@@ -393,6 +401,7 @@ class CommunityFD(Community):
         c_info['presale_url_name'] = soup.iframe['src'].split('projectname=')[1]
         
         return c_info
+
 
 class HouseLJ(BaseMixin, Base):
     __tablename__ = 'house'
@@ -465,16 +474,18 @@ class HouseLJ(BaseMixin, Base):
             
         return h_info
 
+
 class CommunityRecordLJ(BaseMixin, Base):
     __tablename__ = 'community_record'
     
-    def __init__(self, community, batch_number, **kwargs):
-        Base.__init__(self, community=community, batch_number=batch_number)
+    def __init__(self, community, batch_job, **kwargs):
+        Base.__init__(self, community=community, batch_job=batch_job)
         for key, value in kwargs.iteritems():
             if hasattr(self, key):
                 setattr(self, key, value)
     
     community_id = Column(INTEGER, ForeignKey('community.id'), nullable=False)
+    batch_job_id = Column(INTEGER, ForeignKey('batch_job.id'))
     
     average_price = Column(INTEGER)
     house_available = Column(INTEGER)
@@ -490,39 +501,45 @@ class CommunityRecordLJ(BaseMixin, Base):
     valid_average_price = Column(INTEGER)
     average_price_change = Column(INTEGER)
     
-    batch_number = Column(INTEGER, nullable=False)
+    batch_number = Column(INTEGER)
     
-    community = relationship('Community', 
+    community = relationship('Community', foreign_keys=community_id,
                              backref=backref('community_records',
                                              order_by=view_last_month))
-    
+    batch_job = relationship('BatchJobLJ', foreign_keys=batch_job_id,
+                             backref=backref('community_records',
+                                             order_by=view_last_month))
     house_records = relationship('HouseRecordLJ',
                                  primaryjoin='(CommunityRecordLJ.community_id==foreign(HouseRecordLJ.community_id)'
-                                             ')&(CommunityRecordLJ.batch_number==HouseRecordLJ.batch_number)',
+                                             ')&(CommunityRecordLJ.batch_job_id==HouseRecordLJ.batch_job_id)',
                                  )
-    
+
+
 class HouseRecordLJ(BaseMixin, Base):
     __tablename__ = 'house_record'
     
     community_id = Column(INTEGER, ForeignKey('community.id'), nullable=False)
     house_id = Column(INTEGER, ForeignKey('house.id'), nullable=False)
+    batch_job_id = Column(INTEGER, ForeignKey('batch_job.id'))
     
     price = Column(INTEGER)
     price_change = Column(INTEGER)
     view_last_month = Column(INTEGER)
     view_last_week = Column(INTEGER)
     
-    batch_number = Column(INTEGER, nullable=False)
+    batch_number = Column(INTEGER)
     
     community = relationship('Community', foreign_keys=community_id,
                              backref=backref('house_records',
-                                             order_by=batch_number))
+                                             order_by=batch_job_id))
+    batch_job = relationship('BatchJobLJ', foreign_keys=batch_job_id,
+                             backref=backref('house_records'))
     house = relationship('HouseLJ', backref=backref('house_records'),
                          foreign_keys=house_id)
     
-    def __init__(self, house, batch_number, **kwargs):
+    def __init__(self, house, batch_job, **kwargs):
         Base.__init__(self, house=house, community=house.community,
-                      batch_number=batch_number)
+                      batch_job=batch_job)
         for key, value in kwargs.iteritems():
             if hasattr(self, key):
                 setattr(self, key, value)
@@ -543,6 +560,7 @@ class PresalePermit(BaseMixin, Base):
     total_area = Column(FLOAT)
     normal_area = Column(FLOAT)
     status = Column(VARCHAR(64))
+
 
 class BatchJob(BaseMixin, Base):
     __tablename__ = 'batch_job'
@@ -565,10 +583,12 @@ class BatchJob(BaseMixin, Base):
         '''
         self.batch_number = batch_number
         self.status = 'ready'
+        self.cache_dir = None
+        self.job_args = None
             
     def before_act(self, **kwargs):
         self.cache_dir = os.path.join(kwargs.pop('cache_dir', '/tmp'),
-                                       self.type, str(self.batch_number))
+                                      self.type, str(self.batch_number))
         if not os.path.isdir(self.cache_dir):
             os.makedirs(self.cache_dir)
             
@@ -576,16 +596,17 @@ class BatchJob(BaseMixin, Base):
                          'clean_cache': kwargs.get('clean_cache'),
                          }
         
-    def initial(self):
+    def initial(self, *args, **kwargs):
         raise NotImplementedError
     
-    def start(self):
+    def start(self, *args, **kwargs):
         raise NotImplementedError
-    
+
+
 class BatchJobFD(BatchJob):
     
     __mapper_args__ = {
-        'polymorphic_identity': 'batch_job_fd',
+        'polymorphic_identity': 'fangdi',
     }
     
     def __str__(self):
@@ -594,81 +615,189 @@ class BatchJobFD(BatchJob):
     def initial(self, session, **kwargs):
         self.before_act(**kwargs)
         
-        districts = session.query(District).all()
         try:
-            for d in districts:
+            for d in session.query(District).all():
                 job = DistrictJob(d, 1, self)
                 session.add(job)
                 first_page = job.get_web_page(cache=True)
                 cs, total_page = job.district.parse_fd_html(first_page, 1)
                 for i in range(total_page-1):
                     session.add(DistrictJob(d, i+2, self))
-        except Exception:
+        except Exception as e:
             session.rollback()
-            raise
+            logger.error('%s failed.', self)
+            logger.exception(e)
         else:
             session.commit()
-            
+            logger.info('%s finish', self)
+        
     def start(self, session, **kwargs):
         self.before_act(**kwargs)
         
         c_set = (session.query(CommunityFD.outer_id, CommunityFD.track_presale)
-                 .all() )
+                 .all())
         notrack_outer_ids = set(c.outer_id for c in c_set
                                 if not c.track_presale)
         
-        (session.query(DistrictJob)
+        (session.query(Job)
          .filter_by(batch_job_id=self.id, status='failed')
          .update({Job.status: 'retry'}) )
-        (session.query(CommunityJobFD)
-         .filter_by(batch_job_id=self.id, status='failed')
-         .update({Job.status: 'retry'}) )
-        (session.query(PresaleJob)
-         .filter_by(batch_job_id=self.id, status='failed')
-         .update({Job.status: 'retry'}) )
+    
         try:
-            d_jobs = (session.query(DistrictJob)
-                      .filter_by(batch_job_id=self.id)
-                      .filter(Job.status.in_(('ready', 'retry')))
-                      .all() )
-            for job in d_jobs:
-                job.start(session, notrack_outer_ids=notrack_outer_ids,
-                          **self.job_args)
-                
-            c_jobs = (session.query(CommunityJobFD)
-                      .filter_by(batch_job_id=self.id)
-                      .filter(Job.status.in_(('ready', 'retry')))
-                      .all() )
-            for job in c_jobs:
-                job.start(session, **self.job_args)
-                
-            p_jobs = (session.query(PresaleJob)
-                      .filter_by(batch_job_id=self.id)
-                      .filter(Job.status.in_(('ready', 'retry')))
-                      .all() )
-            for job in p_jobs:
-                job.start(session, **self.job_args)
+            for job_cls in (DistrictJob, CommunityJobFD, PresaleJob):
+                jobs = (session.query(job_cls)
+                        .filter_by(batch_job_id=self.id)
+                        .filter(Job.status.in_(('ready', 'retry')))
+                        .all())
+                for job in jobs:
+                    if job_cls is DistrictJob:
+                        job.start(session, notrack_outer_ids=notrack_outer_ids,
+                                  **self.job_args)
+                    else:
+                        job.start(session, **self.job_args)
                 
         except Exception as e:
             logger.exception(e)
             logger.error('%s failed', self)
         else:
-            logger.info('%s finish: %s community jobs.', self, len(c_jobs))
-            
+            logger.info('%s finish.', self)
+
+
 class BatchJobLJ(BatchJob):
     __mapper_args__ = {
-        'polymorphic_identity': 'batch_job_lj',
+        'polymorphic_identity': 'lianjia',
     }
     
+    def initial(self, session, **kwargs):
+        self.before_act(**kwargs)
+        
+        communities = session.query(CommunityLJ).all()
+        for c in communities:
+            logger.debug('initial community batch jobs: %s -> %s', 
+                         c.id, c.outer_id)
+            job = CommunityJobLJ(c, 1, self)
+            first_page = job.get_web_page(cache=True)
+            c_info, house_ids = c.parse_page(first_page, 1)
+            if not house_ids:
+                logger.warn('no house found for community: id=%s, outer_id=%s',
+                            c.id, c.outer_id)
+                job.community = None
+                session.expunge(job)
+                continue
+            total_page = int(math.ceil(c_info['house_available']/20.0))
+            session.add(job)
+            for i in range(total_page-1):
+                session.add(CommunityJobLJ(c, i+2, self))
+            
+            if not job.use_cached:
+                time.sleep(self.job_args.get('interval_time', 0.5))
+
+    def start(self, session, **kwargs):
+        self.before_act(**kwargs)
+        
+        (session.query(Job)
+         .filter_by(batch_job_id=self.id, status='failed')
+         .update({Job.status: 'retry'}))
+        
+        for c in session.query(CommunityLJ).all():
+            self.finish_one_community(c, session)
+            
+    def finish_one_community(self, community, session):
+        for cls in (CommunityJobLJ, HouseJobLJ):
+            jobs = (session.query(cls)
+                    .filter_by(community_id=community.id,
+                               batch_job_id=self.id)
+                    .filter(CommunityJobLJ.status.in_(['ready', 'retry']))
+                    .all())
+            for job in jobs:
+                job.start(session, **self.job_args)
+
+        # update the state of missing houses
+        (session.query(HouseLJ)
+                .filter_by(last_batch_number=self.batch_number-1,
+                           community_id=community.id)
+                .update(
+            {HouseLJ.new: False,
+             HouseLJ.available: False,
+             HouseLJ.available_change_times: HouseLJ.available_change_times+1})
+         )
+
+        # simple aggregation
+        sql = """
+        select sum(case when T2.price_change> 0 then 1 else 0 end),
+               sum(case when T2.price_change< 0 then 1 else 0 end),
+               sum(case when T2.price_change = 0
+                             and (T2.view_last_month > 0
+                                  or T2.view_last_week > 0) then 1
+                        else 0 end),
+               sum(T1.new),
+               sum(case when T1.last_batch_number = :current_batch -1 then 1
+                        else 0 end),
+               sum(case when T1.available is true then T2.view_last_week
+                        else 0 end)
+        from house as T1
+        left join house_record as T2
+          on T1.id = T2.house_id
+          and T2.batch_job_id = :batch_job_id
+        where T1.community_id = :community_id"""
+        rs = session.execute(sql, {'current_batch': self.batch_number,
+                                   'community_id': community.id,
+                                   'batch_job_id': self.id}
+                             ).fetchall()[0]
+
+        c_record = (session.query(CommunityRecordLJ)
+                    .options(joinedload('house_records').joinedload('house'),
+                             joinedload('community'))
+                    .filter_by(batch_job_id=self.id,
+                               community_id=community.id)
+                    .one())
+
+        (c_record.rise_number, c_record.reduce_number,
+         c_record.valid_unchange_number, c_record.new_number,
+         c_record.miss_number, c_record.view_last_week) = rs
+
+        # get average price
+        house_avg_prices = [house_record.price * 10000/house_record.house.area
+                            for house_record in c_record.house_records
+                            if (house_record.view_last_week > 0
+                                or house_record.view_last_month > 0
+                                or house_record.price_change
+                                or house_record.house.new)]
+        if house_avg_prices:
+            c_record.valid_average_price = int(sum(house_avg_prices) /
+                                               len(house_avg_prices))
+            community.valid_average_price = c_record.valid_average_price
+
+        # get average price change
+        last_batch_record = (session.query(CommunityRecordLJ)
+                             .join(BatchJobLJ,
+                                   (CommunityRecordLJ.batch_job_id ==
+                                    BatchJobLJ.id))
+                             .filter(CommunityRecordLJ.community_id ==
+                                     c_record.community_id)
+                             .filter(BatchJobLJ.batch_number ==
+                                     self.batch_number - 1)
+                             .first())
+        if (last_batch_record
+            and c_record.valid_average_price is not None
+            and last_batch_record.valid_average_price is not None):
+            c_record.average_price_change = (
+                        c_record.valid_average_price -
+                        last_batch_record.valid_average_price)
+
+        logger.info('finish')
+        session.commit()
+
+
 class Job(BaseMixin, Base):
-    '''
+    """
     The following method/attribute should be overrided:
         inner_start
         web_uri 
     The following methd/attribute can be overrided:
         web_encode
         disk_uri (for disk cache)
-    '''
+    """
     __tablename__ = 'job'
     
     batch_job_id = Column(INTEGER, ForeignKey('batch_job.id'))
@@ -794,9 +923,9 @@ class Job(BaseMixin, Base):
     
     @property
     def cache_file_path(self):
-        '''return cache_dir/disk_uri. cache_dir is retrieved from environ,
+        """return cache_dir/disk_uri. cache_dir is retrieved from environ,
         disk_uri is got by method self.disk_uri.
-        '''
+        """
         if not hasattr(self, '_cache_file_path'):
             if not hasattr(self, 'disk_uri'):
                 self._cache_file_path = None
@@ -805,7 +934,8 @@ class Job(BaseMixin, Base):
                              else '/tmp')
                 self._cache_file_path = os.path.join(cache_dir, self.disk_uri())        
         return self._cache_file_path
-    
+
+
 class DistrictJob(Job):
 
     district_id = Column(INTEGER, ForeignKey('district.id'))
@@ -837,8 +967,7 @@ class DistrictJob(Job):
                 session.add(CommunityJobFD(community, self.batch_job))
             
             session.add(PresaleJob(community, self.batch_job))
-        
-    
+
     def web_uri(self):
         page_index = self.parameters['page']
         return self.district.fd_search_url(page_index)
@@ -850,7 +979,8 @@ class DistrictJob(Job):
         return 'fd-district-%s-%s-%s.html' % (
                     self.district.id, self.district.outer_id_fd,
                     self.parameters['page'])
-    
+
+
 class CommunityJob(Job):
     community_id = Column(INTEGER, ForeignKey('community.id'))
     community = relationship('Community', backref=backref('jobs'),
@@ -858,6 +988,7 @@ class CommunityJob(Job):
     __mapper_args__ = {
         'polymorphic_identity': 'community_job',
         }
+
 
 class CommunityJobFD(CommunityJob):
     
@@ -880,14 +1011,15 @@ class CommunityJobFD(CommunityJob):
     
     def web_encode(self):
         return 'gbk'
-    
+
+
 class CommunityJobLJ(CommunityJob):
     __mapper_args__ = {
         'polymorphic_identity': 'community_job_lianjia',
         }
     
-    def __init__(self, community, page, batch_number):
-        Job.__init__(self, community=community, batch_number=batch_number,
+    def __init__(self, community, page, batch_job):
+        Job.__init__(self, community=community, batch_job=batch_job,
                      parameters={'page': page})
     
     def inner_start(self, session, **kwargs):
@@ -897,9 +1029,10 @@ class CommunityJobLJ(CommunityJob):
         c_info, house_ids = self.community.parse_page(content, page)
             
         if page == 1:
-            c_record = CommunityRecordLJ(self.community, self.batch_number,
+            c_record = CommunityRecordLJ(self.community, self.batch_job,
                                          **c_info)
             self.community.update(**c_info)
+            self.community.last_batch_number = self.batch_job.batch_number
             session.add(c_record)
                 
         for house_id in house_ids:
@@ -913,7 +1046,7 @@ class CommunityJobLJ(CommunityJob):
                     house.available_change_times += 1
                     
             session.add(house)
-            session.add(HouseJobLJ(house, self.batch_number))
+            session.add(HouseJobLJ(house, self.batch_job))
         
     def web_uri(self):
         return self.community.community_url(self.parameters['page'])
@@ -921,6 +1054,7 @@ class CommunityJobLJ(CommunityJob):
     def disk_uri(self):
         return '%s-%s-%s.html' % (self.community.id, self.community.outer_id,
                                   self.parameters['page'])
+
 
 class HouseJobLJ(CommunityJob):
     __mapper_args__ = {
@@ -931,13 +1065,13 @@ class HouseJobLJ(CommunityJob):
     house = relationship('HouseLJ', backref=backref('jobs'),
                          foreign_keys=house_id)
     
-    def __init__(self, house, batch_number):
-        Job.__init__(self, batch_number=batch_number, house=house,
+    def __init__(self, house, batch_job):
+        Job.__init__(self, batch_job=batch_job, house=house,
                      community=house.community)
     
     def inner_start(self, session):
         house_info = self.house.parse_page(self.get_web_page())
-        h_record = HouseRecordLJ(self.house, self.batch_number, **house_info)
+        h_record = HouseRecordLJ(self.house, self.batch_job, **house_info)
         if self.house.new:
             for key in ('room', 'area', 'floor', 'build_year'):
                 setattr(self.house, key, house_info[key])
@@ -947,14 +1081,14 @@ class HouseJobLJ(CommunityJob):
         for key in ('price', 'view_last_week', 'view_last_month'):
             setattr(self.house, key, house_info[key])
         
-        self.house.last_batch_number = self.batch_number
+        self.house.last_batch_number = self.batch_job.batch_number
         self.house.available = True
         session.add(h_record)
         
     def web_uri(self):
         return self.house.download_url()
-    
-            
+
+
 class PresaleJob(CommunityJob):
     
     __mapper_args__ = {
