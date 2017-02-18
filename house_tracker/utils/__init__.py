@@ -14,5 +14,3 @@ class SingletonMeta(type):
         if not hasattr(cls, 'instance'):
             cls.instance = type.__call__(cls, *args, **kwargs)
         return cls.instance
-    
-    

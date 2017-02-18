@@ -1,24 +1,18 @@
 # coding=utf-8
 
 import os
-import sys
 import argparse
 import logging.config
-from datetime import datetime, timedelta
 
-from sqlalchemy import or_, and_
 from sqlalchemy.orm import joinedload
-from sqlalchemy.sql import func
-from sqlalchemy.sql.expression import case
 import alembic.config, alembic.util
 
-import house_tracker.models as ht_models
-from house_tracker.config import Config
-from house_tracker.exceptions import ConfigError
-from house_tracker.utils.db import get_database_url, get_session
 from .workers import InitWorker, StartWorker
+from .. import models
+from ..config import Config
+from ..utils.db import get_database_url, get_session
 
-import house_tracker_settings as settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,9 +106,9 @@ class BatchJobCommand(Command):
                                }
         self.targets = []
         if self.cmd_args.fangdi:
-            self.targets.append(ht_models.BatchJobFD)
+            self.targets.append(models.BatchJobFD)
         if self.cmd_args.lianjia:
-            self.targets.append(ht_models.BatchJobLJ)
+            self.targets.append(models.BatchJobLJ)
 
 
 class InitBatchJob(BatchJobCommand):
@@ -178,10 +172,10 @@ class Dump(Command):
         path = self.cmd_args.target or '.'
         path = os.path.abspath(os.path.realpath(path))
         if self.cmd_args.fangdi:
-            cs = (session.query(ht_models.CommunityFD)
+            cs = (session.query(models.CommunityFD)
                   .options(joinedload('district'))
                   .filter_by(track_presale=True)
-                  .order_by(ht_models.CommunityFD.created_at)
+                  .order_by(models.CommunityFD.created_at)
                   .all())
             self.dump_fangdi(cs, os.path.join(path, 'fangdi.csv'))
 

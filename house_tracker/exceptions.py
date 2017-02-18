@@ -1,12 +1,20 @@
 
 class HouseTrackerError(Exception): pass
 
-class JobError(HouseTrackerError): pass
 
-class BatchJobError(JobError): pass
+class ModelError(Exception): pass
 
-class DownloadError(HouseTrackerError): pass
 
-class ParseError(HouseTrackerError): pass
+class JobError(ModelError): pass
+
+
+class BatchJobError(ModelError): pass
+
+
+class DownloadError(ModelError): pass
+
+
+class ParseError(ModelError): pass
+
 
 class ConfigError(HouseTrackerError): pass
