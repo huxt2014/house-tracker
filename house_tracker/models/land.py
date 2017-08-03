@@ -7,12 +7,11 @@ from bs4 import BeautifulSoup
 from sqlalchemy import Column, ForeignKey
 from sqlalchemy.dialects.mysql import VARCHAR, INTEGER, FLOAT, DATE, TEXT
 from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import DeclarativeMeta
 
-from .base import BaseMixin, Base, District
+from .base import IdMixin, Base, District
 
 
-class LandSoldRecord(BaseMixin, Base):
+class LandSoldRecord(IdMixin, Base):
     __tablename__ = 'land_sold_record'
 
     district_id = Column(INTEGER, ForeignKey("district.id"))
@@ -48,7 +47,7 @@ class LandSoldRecord(BaseMixin, Base):
         return data
 
 
-class Land(BaseMixin, Base):
+class Land(IdMixin, Base):
     __tablename__ = 'land'
 
     sold_record_id = Column(INTEGER, ForeignKey("land_sold_record.id"))

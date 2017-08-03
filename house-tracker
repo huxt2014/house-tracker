@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 
-from house_tracker.commands import Command
+from house_tracker.command import Command
 
 if __name__ == '__main__':
     Command().start()

@@ -11,10 +11,8 @@ setup(
     author_email='huxt2013@163.com',
     url="https://github.com/huxt2014/house-tracker",
     packages=find_packages(),
-    scripts = ['house_tracker_settings.py', 'house_tracker.py',
-               'track_lianjia.py'],
+    scripts=['house-tracker'],
     include_package_data=True,
-    install_requires=['alembic==0.8.7', 'requests>=2.9.1', 'SQLAlchemy>=1.0.12',
-                      'MySQL-python>=1.2.5', 'flask>=0.10.1', 
-                      'flask_admin>=1.4.0', 'bs4'],
+    install_requires=['alembic', 'requests', 'SQLAlchemy', 'PyMySQL', 'flask',
+                      'flask_admin', 'bs4'],
 )

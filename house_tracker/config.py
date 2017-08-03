@@ -1,118 +1,101 @@
 
 import os
-import logging.config
+import copy
+import tempfile
 
-from .utils import singleton, SingletonMeta
+from sqlalchemy.engine.url import URL
+
+from .utils import SingletonMeta
 from .exceptions import ConfigError
 
 
+DEFAULT_LOG_CONFIG = {
+    'version': 1,
+    'formatters': {
+        'basic': {
+            'format': '%(asctime)s-%(levelname)s:%(message)s'
+            }
+        },
+    'handlers': {
+        'file': {
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'formatter': 'basic',
+            'filename': 'log.txt',
+            'when': 'D',
+            },
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'basic',
+            }
+        },
+    'root': {
+        'level': 'INFO',
+        'handlers': ['file']
+        },
+    'loggers': {
+        # suppress the log info from requests to warn level
+        'requests': {
+            'level': 'WARN',
+            'handlers': ['file'],
+            'propagate': False
+            },
+        },
+    'disable_existing_loggers': False
+}
 
-class Config():
-    __metaclass__ = SingletonMeta
-    
+
+class Config(metaclass=SingletonMeta):
+
+    log_file = None
+    log_config = None
+    data_dir = '/tmp/house_tracker'
+    database = None
+    db_url = None
+    lj_number_per_page = 30
+
     def __init__(self):
         import house_tracker_settings
-        for name in ('log_dir', 'data_dir', 'logger_config', 'database',
-                     'interval_time'):
-            setattr(self, name, getattr(house_tracker_settings, name, None))
-    
-    @property
-    def log_dir(self):
-        return self._log_dir
-    @log_dir.setter
-    def log_dir(self, value):
-        if not value:
-            self._log_dir = '/tmp'
+        for name in ('log_file', 'log_config', 'data_dir', 'database',
+                     "lj_number_per_page"):
+            v = getattr(house_tracker_settings, name, None)
+            if v is not None:
+                setattr(self, name, v)
+
+        self.check()
+
+    def check(self):
+        # log
+        if self.log_config is None:
+            self.log_config = copy.deepcopy(DEFAULT_LOG_CONFIG)
+            if self.log_file is not None:
+                self.log_config["handlers"]['file']['filename'] = \
+                    real_path(self.log_file)
+
+        # database
+        if not self.database:
+            raise ConfigError('no database config')
         else:
-            self._log_dir = value
-            if not os.path.isdir(value):
-                os.mkdir(value)
-    
-    @property
-    def data_dir(self):
-        return self._data_dir
-    @data_dir.setter
-    def data_dir(self, value):
-        if not value:
-            self._data_dir = '/tmp'
+            try:
+                self.db_url = URL(**self.database)
+            except TypeError:
+                raise ConfigError("invalid database config")
+
+        # data_dir
+        self.data_dir = real_path(self.data_dir, directory=True)
+
+
+def real_path(path, directory=False):
+    path = os.path.abspath(os.path.realpath(path))
+
+    try:
+        if not directory:
+            d = os.path.basename(path)
+            os.makedirs(d, exist_ok=True)
+            f = tempfile.NamedTemporaryFile(dir=d)
+            f.close()
         else:
-            self._data_dir = value
-            if not os.path.isdir(value):
-                os.mkdir(value)
-    
-    @property
-    def logger_config(self):
-        return self._logger_config
-    @logger_config.setter
-    def logger_config(self, value):
-        if not value:
-            self._logger_config = {
-                'version': 1,
-                'formatters':{
-                    'basic': {
-                        'format': ('%(asctime)s-%(name)s-%(lineno)d-'
-                                   '%(levelname)s:%(message)s')
-                        }
-                    },
-                'handlers':{
-                    'file':{
-                        'class': 'logging.handlers.TimedRotatingFileHandler',
-                        'formatter': 'basic',
-                        'filename': os.path.join(self.log_dir, 'log.txt'),
-                        'when': 'D',
-                        },
-                    'console':{
-                        'class': 'logging.StreamHandler',
-                        'formatter': 'basic',
-                        }
-                    },
-                'root':{
-                    'level': 'INFO',
-                    'handlers': ['file', 'console']
-                    },
-                'loggers':{
-                    # suppress the log info from requests to warn level
-                    'requests':{
-                        'level': 'WARN',
-                        'handlers': ['file'],
-                        'propagate': False
-                        },
-                    },
-                # if True, the logger initialized before configuration
-                # happening will be disabled.
-                'disable_existing_loggers':False
-                }
-        else:
-            self._logger_config = value
-        logging.config.dictConfig(self._logger_config)
-    
-    @property
-    def database(self):
-        return self._database
-    @database.setter
-    def database(self, value):
-        try:
-            for name in ('driver', 'host', 'name', 'user', 'password'):
-                if not value.get(name):
-                    raise ConfigError('database key missing: %s' % name)
-        except AttributeError:
-            raise ConfigError('database should be dict like.')
-        else:
-            self._database = value
-            
-    @property
-    def interval_time(self):
-        return getattr(self, '_interval_time', 1)
-    @interval_time.setter
-    def interval_time(self, value):
-        try:
-            self._interval_time = float(value)
-        except ValueError:
-            raise ConfigError('interval_time should be float')
-    
-    
-    def __getattr__(self, name):
-        raise ConfigError('%s not configured.' % name)
-        
-    
- 
+            os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        raise ConfigError("IO error: %s %s" % (path, e))
+
+    return path

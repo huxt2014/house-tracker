@@ -1,16 +1,22 @@
 # coding=utf-8
 
-import re
 import math
-import time
 import logging
+import functools
 
 from bs4 import BeautifulSoup
-from sqlalchemy import Column, ForeignKey, func
-from sqlalchemy.dialects.mysql import VARCHAR, INTEGER, BOOLEAN, FLOAT
-from sqlalchemy.orm import relationship, backref, joinedload
+from requests import Request
+from sqlalchemy import (Column, ForeignKey, ForeignKeyConstraint, func, select,
+                        case, text)
+from sqlalchemy.dialects.mysql import BINARY, VARCHAR, INTEGER, BOOLEAN, FLOAT
+from sqlalchemy.orm import relationship, backref
 
-from .base import BaseMixin, Base, Community, BatchJob, Job, JobWithCommunity
+from . import base
+from .base import (IdMixin, Base, Community, BatchJob, JobWithCommunity,
+                   PagesIterator)
+from ..exceptions import ParseError, JobError
+from .. import utils
+
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +27,6 @@ class CommunityLJ(Community):
     house_available = Column(INTEGER)
     sold_last_season = Column(INTEGER)
     view_last_month = Column(INTEGER)
-    last_batch_number = Column(INTEGER)
-    valid_average_price = Column(INTEGER)
     # houses=relationship
     # community_records=relationship
     # house_records = relationship
@@ -31,74 +35,105 @@ class CommunityLJ(Community):
         'polymorphic_identity': 'lianjia',
     }
 
+    SEARCH_URL = 'http://sh.lianjia.com/ershoufang/d%sq%ss20'
+    NUMBER_PER_PAGE = 30
+
     def __init__(self, name, outer_id, area):
         Community.__init__(self, name, outer_id, area.district, area=area)
 
     def __str__(self):
         return self.name
 
-    def community_url(self, page):
-        return 'http://sh.lianjia.com/ershoufang/d%sq%ss8' % (
-            page, self.outer_id)
+    def lj_search(self, http_session, page, number_per_page=None):
+        req = self._lj_search_request(page)
+        resp = utils.do_http_request(http_session, req)
+        return self._lj_parse(resp, page, number_per_page)
 
-    def update(self, **kwargs):
-        for key in ('average_price', 'house_available', 'sold_last_season',
-                    'view_last_month'):
-            if key in kwargs:
-                setattr(self, key, kwargs[key])
+    def _lj_search_request(self, page):
+        url = self.SEARCH_URL % (page, self.outer_id)
+        return Request(url=url, method="GET")
 
-    def parse_page(self, content, page_number):
-        house_ids = []
-        soup = BeautifulSoup(content, 'html.parser')
+    def update(self, average_price=None, house_available=None,
+               sold_last_season=None, view_last_month=None):
+        self.average_price = average_price
+        self.house_available = house_available
+        self.sold_last_season = sold_last_season
+        self.view_last_month = view_last_month
+
+    @staticmethod
+    def _lj_parse(resp, page, number_per_page):
+
+        soup = BeautifulSoup(resp.text, "html.parser")
 
         try:
-            if content.find(u'暂时没有找到符合条件的内容') > 0:
-                return None, None
-            # check page index
-            on_page = int(soup.find('div', class_='page-box house-lst-page-box')
-                          .find('a', class_='on').get_text())
-            if page_number != on_page:
-                raise Exception('target page %s, but get page %s' % (
-                    page_number, on_page))
+            # get total page
+            total_num = int(soup.find("span", class_="result-count strong-num")
+                            .get_text())
+            total_page = math.ceil(total_num / number_per_page)
+        except (ValueError, AttributeError) as e:
+            raise ParseError("parse total number of community page failed: %s,"
+                             " %s." % (resp.url, e))
 
-            # get community info
-            if on_page == 1:
-                c_info = {}
-                li_tags = soup.find('div', 'secondcon fl').ul.find_all('li')
-                try:
-                    c_info['average_price'] = int(li_tags[0].find('strong')
-                                                  .get_text())
-                except AttributeError:
-                    if li_tags[0].find('span', class_='newstrong'
-                                       ).get_text() == u'暂无均价':
-                        c_info['average_price'] = None
-                    else:
-                        msg = ('parse community average price failed: '
-                               '%s->%s.') % (self.id, self.outer_id)
-                        raise Exception(msg)
-                c_info['house_available'] = int(li_tags[2].find('strong')
-                                                .get_text())
-                c_info['sold_last_season'] = int(li_tags[4].find('strong')
-                                                 .get_text())
-                c_info['view_last_month'] = int(li_tags[6].find('strong')
-                                                .get_text())
-            else:
-                c_info = None
+        # check page index
+        on_page = int(soup.find("span", class_="current").get_text())
+        if page != on_page:
+            raise ParseError("request lianjia.com community page of page %s,"
+                             " but get page %s: %s" % (page, on_page, resp.url))
 
-            # get house_id
-            li_tags = soup.find('ul', id='house-lst',
-                                class_='house-lst').find_all('li')
-            for house_tag in li_tags:
-                house_ids.append(house_tag.div.a['key'])
+        # get community info
+        if on_page == 1:
+            li_tags = soup.find("div", class_="m-side-bar").ul.find_all("li")
+            span_c = "num strong-num"
+            try:
+                average_price = int(li_tags[0].find("span", class_=span_c)
+                                    .get_text())
+            except AttributeError:
+                average_price = None
+            house_available = int(li_tags[1].find("span", class_=span_c)
+                                  .get_text())
+            sold_last_season = int(li_tags[2].find("span", class_=span_c)
+                                   .get_text())
+            view_last_month = int(li_tags[3].find("span", class_=span_c)
+                                  .get_text())
+            c_info = {"average_price": average_price,
+                      "house_available": house_available,
+                      "sold_last_season": sold_last_season,
+                      "view_last_month": view_last_month}
+        else:
+            c_info = None
 
-            return c_info, house_ids
+        # todo: no houses found
 
-        except Exception as e:
-            logger.exception(e)
-            raise Exception('parse community page error.')
+        # get house info
+        houses_info = []
+        info_list = soup.find_all("div", class_="info")
+        for info in info_list:
+            detail = {"outer_id": info.div.a["key"]}
+
+            rows = info.find_all("div", class_="info-row")
+            detail["price"] = int(rows[0].div.span.get_text())
+            cols = rows[0].span.get_text().split("|")
+            detail["room"] = cols[0].strip()
+            detail["area"] = float(cols[1].strip().replace("平", ""))
+            detail["floor"] = cols[2].strip()
+
+            cols = rows[1].span.get_text().split("|")
+            detail["build_year"] = int(cols[-1].strip().replace("年建", ""))
+
+            houses_info.append(detail)
+
+        if (total_page > 1
+           and on_page == 1
+           and len(houses_info) != number_per_page):
+            raise ParseError("It seems that you set wrong number_per_page for"
+                             "lianjia community.")
+
+        return {"community_info": c_info,
+                "houses_info": houses_info,
+                "total_page": total_page}
 
 
-class HouseLJ(BaseMixin, Base):
+class HouseLJ(IdMixin, Base):
     __tablename__ = 'house'
 
     community_id = Column(INTEGER, ForeignKey('community.id'), nullable=False)
@@ -108,349 +143,258 @@ class HouseLJ(BaseMixin, Base):
     room = Column(VARCHAR(64))
     build_year = Column(INTEGER)
     floor = Column(VARCHAR(64))
-    available = Column(BOOLEAN)
-
     price_origin = Column(INTEGER)
+    last_batch_number = Column(INTEGER)
+    new = Column(BOOLEAN)
+    available = Column(BOOLEAN)
+    available_change_times = Column(INTEGER)
+
     price = Column(INTEGER)
     view_last_month = Column(INTEGER)
     view_last_week = Column(INTEGER)
-    new = Column(BOOLEAN)
-    available_change_times = Column(INTEGER)
-
-    last_batch_number = Column(INTEGER)
 
     community = relationship('Community',
                              backref=backref('houses', order_by=view_last_month)
                              )
+    SEARCH_URL = "http://sh.lianjia.com/ershoufang/%s.html"
 
-    def __init__(self, outer_id, community):
+    def __init__(self, outer_id, community, area=None, room=None,
+                 build_year=None, floor=None, price=None,
+                 last_batch_number=None):
         Base.__init__(self, outer_id=outer_id, community=community,
-                      community_id=community.id, new=True, available=True,
-                      available_change_times=0)
+                      community_id=community.id, area=area, room=room,
+                      build_year=build_year, floor=floor,
+                      price=price, price_origin=price,
+                      last_batch_number=last_batch_number,
+                      new=True, available=True, available_change_times=0)
 
-    def download_url(self):
-        return 'http://sh.lianjia.com/ershoufang/%s.html' % self.outer_id
+    def lj_search_request(self):
+        url = self.SEARCH_URL % self.outer_id
+        return Request(url=url, method="GET")
 
-    def parse_page(self, content):
-        soup = BeautifulSoup(content, 'html.parser')
-        assert soup.find('span', class_='title',
-                         string=u'房源编号：' + self.outer_id
-                         ) is not None, 'get wrong page'
+    def lj_parse(self, resp):
 
-        h_info = {}
-        house_info_tag = soup.find('div', class_='houseInfo')
-        around_info_tag = soup.find('table', class_='aroundInfo')
+        soup = BeautifulSoup(resp.text, "html.parser")
+        info = {}
 
-        h_info['price'] = int(house_info_tag.div.div.get_text()
-                              .replace(u'万', ''))
-        h_info['room'] = (house_info_tag.find('div', class_='room').div
-                          .get_text())
-        h_info['area'] = float(house_info_tag.find('div', class_='area')
-                               .div.get_text().replace(u'平', ''))
-        year_string = (around_info_tag.find('span', string=re.compile(u'年代'))
-                       .parent.text.split(u'：')[1].strip())
-        result = re.match('(\d{4})', year_string)
-        if result:
-            h_info['build_year'] = int(result.group(1))
-        else:
-            h_info['build_year'] = None
-        h_info['floor'] = (around_info_tag.find('span',
-                                                string=re.compile(u'楼层'))
-                           .parent.text.split(u'：')[1].strip())
+        # check
+        main_info = soup.find("ul", class_="maininfo-minor maininfo-item")
+        li_tags = main_info.find_all("li")
+        tmp = li_tags[-1].get_text().replace(" ", "")
+        if tmp.find(self.outer_id) < 0:
+            raise ParseError("get house page with invalid outer_id, %s: %s"
+                             % (tmp, resp.url))
 
-        tmp_tag = soup.find('div', string=u'近7天带看次数')
-        if tmp_tag:
-            view_tag = tmp_tag.parent
-            h_info['view_last_week'] = int(view_tag.find(class_='count').text)
-            h_info['view_last_month'] = int(view_tag.find('span').text)
-        else:
-            # if house is not available now, the following information will
-            # not display.
-            h_info['view_last_week'] = None
-            h_info['view_last_month'] = None
+        look_list = soup.find('look-list')
+        info["view_last_week"] = int(look_list.get("count7"))
+        info["view_last_month"] = int(look_list.get("count90"))
 
-        return h_info
+        return info
 
 
-class CommunityRecordLJ(BaseMixin, Base):
+class CommunityRecordLJ(IdMixin, Base):
     __tablename__ = 'community_record'
 
-    def __init__(self, community, batch_job, **kwargs):
-        Base.__init__(self, community=community, batch_job=batch_job)
-        for key, value in kwargs.iteritems():
-            if hasattr(self, key):
-                setattr(self, key, value)
+    __table_args__ = (
+        ForeignKeyConstraint(('batch_number', 'batch_type'),
+                             ('batch_job.batch_number', 'batch_job.type')),
+        Base.__table_args__
+    )
 
     community_id = Column(INTEGER, ForeignKey('community.id'), nullable=False)
-    batch_job_id = Column(INTEGER, ForeignKey('batch_job.id'))
+    batch_number = Column(INTEGER, nullable=False)
+    batch_type = Column(BINARY(8), nullable=False)
 
     average_price = Column(INTEGER)
     house_available = Column(INTEGER)
     sold_last_season = Column(INTEGER)
     view_last_month = Column(INTEGER)
 
-    rise_number = Column(INTEGER)
-    reduce_number = Column(INTEGER)
-    valid_unchange_number = Column(INTEGER)
     new_number = Column(INTEGER)
-    miss_number = Column(INTEGER)
-    view_last_week = Column(INTEGER)
-    valid_average_price = Column(INTEGER)
-    average_price_change = Column(INTEGER)
-
-    batch_number = Column(INTEGER)
+    missing_number = Column(INTEGER)
 
     community = relationship('Community', foreign_keys=community_id,
                              backref=backref('community_records',
-                                             order_by=view_last_month))
-    batch_job = relationship('BatchJobLJ', foreign_keys=batch_job_id,
+                                             order_by=batch_number))
+    batch_job = relationship('BatchJobLJ',
+                             foreign_keys=[batch_number, batch_type],
                              backref=backref('community_records',
                                              order_by=view_last_month))
+    """
     house_records = relationship('HouseRecordLJ',
                                  primaryjoin='(CommunityRecordLJ.community_id==foreign(HouseRecordLJ.community_id)'
                                              ')&(CommunityRecordLJ.batch_job_id==HouseRecordLJ.batch_job_id)',
                                  )
+"""
+    def __init__(self, community, batch_job, **kwargs):
+        Base.__init__(self, community=community, batch_job=batch_job, **kwargs)
 
 
-class HouseRecordLJ(BaseMixin, Base):
+class HouseRecordLJ(IdMixin, Base):
     __tablename__ = 'house_record'
+
+    __table_args__ = (
+        ForeignKeyConstraint(('batch_number', 'batch_type'),
+                             ('batch_job.batch_number', 'batch_job.type')),
+        Base.__table_args__
+    )
 
     community_id = Column(INTEGER, ForeignKey('community.id'), nullable=False)
     house_id = Column(INTEGER, ForeignKey('house.id'), nullable=False)
-    batch_job_id = Column(INTEGER, ForeignKey('batch_job.id'))
+    batch_number = Column(INTEGER, nullable=False)
+    batch_type = Column(BINARY(8), nullable=False)
 
     price = Column(INTEGER)
     price_change = Column(INTEGER)
     view_last_month = Column(INTEGER)
     view_last_week = Column(INTEGER)
 
-    batch_number = Column(INTEGER)
-
     community = relationship('Community', foreign_keys=community_id,
                              backref=backref('house_records',
-                                             order_by=batch_job_id))
-    batch_job = relationship('BatchJobLJ', foreign_keys=batch_job_id,
+                                             order_by=batch_number))
+    batch_job = relationship('BatchJobLJ',
+                             foreign_keys=[batch_number, batch_type],
                              backref=backref('house_records'))
     house = relationship('HouseLJ', backref=backref('house_records'),
                          foreign_keys=house_id)
 
     def __init__(self, house, batch_job, **kwargs):
         Base.__init__(self, house=house, community=house.community,
-                      batch_job=batch_job)
-        for key, value in kwargs.iteritems():
-            if hasattr(self, key):
-                setattr(self, key, value)
+                      batch_job=batch_job, **kwargs)
+        house.last_batch_number = batch_job.batch_number
+
+    def load_detail(self, http_session):
+        resp = utils.do_http_request(http_session,
+                                     self.house.lj_search_request())
+        info = self.house.lj_parse(resp)
+        self.house.view_last_week = self.view_last_week = info["view_last_week"]
+        self.house.view_last_month = self.view_last_month = info["view_last_month"]
 
 
 class BatchJobLJ(BatchJob):
     __mapper_args__ = {
-        'polymorphic_identity': 'lianjia',
+        'polymorphic_identity': b'lianjia' + bytes(1),
     }
 
-    def _initial(self, session):
-        communities = session.query(CommunityLJ).all()
-        for c in communities:
-            logger.debug('initial community batch jobs: %s -> %s',
-                         c.id, c.outer_id)
-            job = CommunityJobLJ(c, self, 1)
-            first_page = job.get_web_page(cache=True)
-            c_info, house_ids = c.parse_page(first_page, 1)
-            if not house_ids:
-                logger.warn('no house found for community: id=%s, outer_id=%s',
-                            c.id, c.outer_id)
-                job.parameters['no_house'] = True
-            else:
-                total_page = int(math.ceil(c_info['house_available'] / 20.0))
-                for i in range(total_page - 1):
-                    session.add(CommunityJobLJ(c, self, i + 2))
+    def _start(self, lj_number_per_page=None, community_outer_ids=None):
+        result = base.FINISHED
 
-            if not job.use_cached:
-                time.sleep(self.job_args.get('interval_time', 0.1))
+        for community, job in self.get_community_and_job(community_outer_ids):
+            if job is not None and job.status == base.FINISHED:
+                continue
+            elif job is None:
+                job = CommunityJob(community, self)
+                self.db_session.add(job)
+                self.commit()
 
-    def _start(self, session):
-        communities = (session.query(CommunityLJ)
-                       .filter(CommunityLJ.last_batch_number
-                               != self.batch_number)
-                       .all())
-        for c in communities:
-            self.finish_one_community(c, session)
+            logger.info("lianjia community start: %s" % community)
+            try:
+                job.start(self.db_session, self.http_session,
+                          auto_commit=self.auto_commit,
+                          lj_number_per_page=lj_number_per_page)
+            except JobError as e:
+                logger.error("CommunityJob of id %s failed: %s", job.id, e)
+                job.status = base.FAILED
+                self.commit()
+                result = base.FAILED
 
-    def finish_one_community(self, community, session):
-        for cls in (CommunityJobLJ, HouseJobLJ):
-            jobs = (session.query(cls)
-                    .filter_by(community_id=community.id,
-                               batch_job_id=self.id)
-                    .filter(CommunityJobLJ.status.in_(['ready', 'retry']))
-                    .all())
-            for job in jobs:
-                job.start(session, **self.job_args)
+        return result
+
+    def get_community_and_job(self, community_outer_ids):
+        if community_outer_ids is None:
+            filter_ = None
+        else:
+            filter_ = CommunityLJ.outer_id.in_(community_outer_ids)
+
+        return self._get_obj_and_job(CommunityLJ, CommunityJob,
+                                     CommunityJob.community_id == CommunityLJ.id,
+                                     filter_=filter_,
+                                     order=CommunityLJ.outer_id)
+
+
+class CommunityJob(JobWithCommunity):
+    __mapper_args__ = {
+        'polymorphic_identity': 'community_job_lj',
+    }
+
+    community = relationship(CommunityLJ,
+                             foreign_keys=JobWithCommunity.community_id,
+                             primaryjoin=JobWithCommunity.community_id==CommunityLJ.id)
+
+    def _start(self, lj_number_per_page=None):
+
+        existing_outer_ids = {h.outer_id: h for h in self.community.houses}
+        search_func = functools.partial(self.community.lj_search,
+                                        number_per_page=lj_number_per_page)
+
+        for content in PagesIterator(self, search_func):
+            c_info = content["community_info"]
+            houses_info = content["houses_info"]
+
+            if c_info is not None:
+                # only page 1 will return community_info
+                c_record = CommunityRecordLJ(self.community, self.batch_job,
+                                             **c_info)
+                self.community.update(**c_info)
+                self.db_session.add(c_record)
+
+            for h_info in houses_info:
+                if h_info["outer_id"] in existing_outer_ids:
+                    house = existing_outer_ids[h_info["outer_id"]]
+                    house.new = False
+                    price_change = h_info["price"] - house.price
+                    if not house.available:
+                        house.available = True
+                        house.available_change_times += 1
+                else:
+                    house = HouseLJ(h_info.pop("outer_id"), self.community,
+                                    **h_info)
+                    price_change = None
+
+                # todo: deal with duplicate house
+
+                if (house.last_batch_number is None
+                   or house.last_batch_number != self.batch_number):
+                    h_record = HouseRecordLJ(house, self.batch_job,
+                                             price=h_info["price"],
+                                             price_change=price_change)
+                    self.db_session.add(h_record)
+                    h_record.load_detail(self.http_session)
+
+            self.commit()
 
         # update the state of missing houses
         data = {HouseLJ.new: False,
                 HouseLJ.available: False,
                 HouseLJ.available_change_times:
                     HouseLJ.available_change_times + 1}
-        (session.query(HouseLJ)
+        (self.db_session.query(HouseLJ)
          .filter_by(last_batch_number=self.batch_number - 1,
-                    community_id=community.id)
+                    community_id=self.community.id)
          .update(data))
 
-        # simple aggregation
-        sql = """
-        select sum(case when T2.price_change> 0 then 1 else 0 end),
-               sum(case when T2.price_change< 0 then 1 else 0 end),
-               sum(case when T2.price_change = 0
-                             and (T2.view_last_month > 0
-                                  or T2.view_last_week > 0) then 1
-                        else 0 end),
-               sum(T1.new),
-               sum(case when T1.last_batch_number = :current_batch -1 then 1
-                        else 0 end),
-               sum(case when T1.available is true then T2.view_last_week
-                        else 0 end)
-        from house as T1
-        left join house_record as T2
-          on T1.id = T2.house_id
-          and T2.batch_job_id = :batch_job_id
-        where T1.community_id = :community_id"""
-        rs = session.execute(sql, {'current_batch': self.batch_number,
-                                   'community_id': community.id,
-                                   'batch_job_id': self.id}
-                             ).fetchall()[0]
+        # new number and miss number
+        # warning: pymysql will convert result of sum(boolean) to boolean
+        col_new = func.sum(func.convert(HouseLJ.new, text("INTEGER"))
+                           ).label("new")
+        col_missing = func.sum(
+                        case([(HouseLJ.last_batch_number == self.batch_number-1, 1)],
+                             else_=0)
+                      ).label("missing")
 
-        c_record = (session.query(CommunityRecordLJ)
-                    .options(joinedload('house_records').joinedload('house'),
-                             joinedload('community'))
-                    .filter_by(batch_job_id=self.id,
-                               community_id=community.id)
-                    .one())
+        query = (select([col_new, col_missing])
+                 .where(HouseLJ.community_id == self.community_id))
+        rs = self.db_session.execute(query).fetchall()[0]
 
-        (c_record.rise_number, c_record.reduce_number,
-         c_record.valid_unchange_number, c_record.new_number,
-         c_record.miss_number, c_record.view_last_week) = rs
+        data = {CommunityRecordLJ.new_number: rs.new,
+                CommunityRecordLJ.missing_number: rs.missing}
+        (self.db_session.query(CommunityRecordLJ)
+         .filter_by(batch_number=self.batch_number,
+                    community_id=self.community.id)
+         .update(data))
 
-        # get average price
-        house_avg_prices = [house_record.price * 10000 / house_record.house.area
-                            for house_record in c_record.house_records
-                            if (house_record.view_last_week > 0
-                                or house_record.view_last_month > 0
-                                or house_record.price_change
-                                or house_record.house.new)]
-        if house_avg_prices:
-            c_record.valid_average_price = int(sum(house_avg_prices) /
-                                               len(house_avg_prices))
-            community.valid_average_price = c_record.valid_average_price
-
-        # get average price change
-        last_batch_record = (session.query(CommunityRecordLJ)
-                             .join(CommunityRecordLJ.batch_job)
-                             .filter(CommunityRecordLJ.community_id ==
-                                     c_record.community_id)
-                             .filter(BatchJobLJ.batch_number ==
-                                     self.batch_number - 1)
-                             .first())
-        if (last_batch_record
-            and c_record.valid_average_price is not None
-            and last_batch_record.valid_average_price is not None):
-            c_record.average_price_change = (
-                c_record.valid_average_price -
-                last_batch_record.valid_average_price)
-
-        community.last_batch_number = self.batch_number
-        session.commit()
-
-
-class CommunityJobLJ(JobWithCommunity):
-    __mapper_args__ = {
-        'polymorphic_identity': 'community_job_lianjia',
-    }
-
-    def __init__(self, community, batch_job, page):
-        JobWithCommunity.__init__(self, community, batch_job,
-                                  parameters={'page': page})
-
-    def inner_start(self, session, **kwargs):
-        page = self.parameters['page']
-
-        content = self.get_web_page()
-        c_info, house_ids = self.community.parse_page(content, page)
-
-        if page == 1:
-            if self.parameters.get('no_house'):
-                # when no house found, parse_page return (None, None)
-                c_info = {'house_available': 0}
-
-            c_record = CommunityRecordLJ(self.community, self.batch_job,
-                                         **c_info)
-            self.community.update(**c_info)
-            session.add(c_record)
-
-        if self.parameters.get('no_house'):
-            return
-
-        for house_id in house_ids:
-            house = session.query(HouseLJ).filter_by(outer_id=house_id).first()
-            job_exist = (session.query(func.count(HouseJobLJ.id))
-                         .join(HouseJobLJ.house)
-                         .filter(HouseJobLJ.batch_job_id == self.batch_job.id)
-                         .filter(HouseLJ.outer_id == house_id)
-                         .scalar())
-            if not house:
-                house = HouseLJ(house_id, self.community)
-            else:
-                if job_exist:
-                    # house status already be updated
-                    pass
-                else:
-                    house.new = False
-                    if not house.available:
-                        house.available = True
-                        house.available_change_times += 1
-
-            # skip duplicate job
-            if not job_exist:
-                session.add(HouseJobLJ(house, self.batch_job))
-
-    def web_uri(self):
-        return self.community.community_url(self.parameters['page'])
-
-    def disk_uri(self):
-        return '%s-%s-%s.html' % (self.community.id, self.community.outer_id,
-                                  self.parameters['page'])
-
-
-class HouseJobLJ(JobWithCommunity):
-    __mapper_args__ = {
-        'polymorphic_identity': 'house_job_lianjia',
-    }
-
-    house_id = Column(INTEGER, ForeignKey('house.id'))
-    house = relationship('HouseLJ', backref=backref('jobs'),
-                         foreign_keys=house_id)
-
-    def __init__(self, house, batch_job):
-        JobWithCommunity.__init__(self, house.community, batch_job)
-        self.house = house
-
-    def inner_start(self, session, **kwargs):
-        house_info = self.house.parse_page(self.get_web_page())
-        h_record = HouseRecordLJ(self.house, self.batch_job, **house_info)
-        if self.house.new:
-            for key in ('room', 'area', 'floor', 'build_year'):
-                setattr(self.house, key, house_info[key])
-            self.house.price_origin = house_info['price']
-        else:
-            h_record.price_change = h_record.price - self.house.price
-        for key in ('price', 'view_last_week', 'view_last_month'):
-            setattr(self.house, key, house_info[key])
-
-        self.house.last_batch_number = self.batch_job.batch_number
-        self.house.available = True
-        session.add(h_record)
-
-    def web_uri(self):
-        return self.house.download_url()
+        return base.FINISHED
 
 
 __all__ = ['CommunityLJ', 'HouseLJ', 'CommunityRecordLJ', 'HouseRecordLJ',
-           'BatchJobLJ', 'CommunityJobLJ', 'HouseJobLJ']
+           'BatchJobLJ', 'CommunityJob']

@@ -1,41 +1,85 @@
 # coding=utf-8
 
 import re
-import urllib
+import codecs
 import random
 import logging
-from datetime import date
+import urllib.parse
+from datetime import date, datetime
 
 from bs4 import BeautifulSoup
 from sqlalchemy import Column, ForeignKey
 from sqlalchemy.dialects.mysql import VARCHAR, INTEGER, BOOLEAN, FLOAT, DATE
 from sqlalchemy.orm import relationship, backref
+from requests import Request
 
-from .base import (District, Community, BaseMixin, Base, BatchJob, Job,
-                   JobWithCommunity)
-from ..exceptions import BatchJobError, JobError
+from . import base
+from .base import (District, Community, IdMixin, Base, BatchJob, Job,
+                   PagesIterator)
+from .. import utils
+from ..exceptions import JobError, ParseError, DownloadError
 
 
 logger = logging.getLogger(__name__)
+ENCODING = "gbk"
 
 
 class DistrictFD(District):
-    __tablename__ = District.__tablename__
-    __table_args__ = {
-        'extend_existing': True
-    }
 
-    outer_id_fd = Column(INTEGER)
     # jobs = relationship('DistrictJob')
 
-    def fd_search_url(self, page_num):
-        return ('http://www.fangdi.com.cn/complexpro.asp?page=%s&districtID=%s'
-                '&Region_ID=&projectAdr=&projectName=&startCod=&buildingType=1'
-                '&houseArea=0&averagePrice=0&selState=&selCircle=0'
-                ) % (page_num, self.outer_id_fd)
+    SEARCH_URL = "http://www.fangdi.com.cn/complexpro.asp"
 
-    def parse_fd_html(self, content, page_index):
-        soup = BeautifulSoup(content, 'html.parser')
+    def fd_search(self, http_session, page):
+        req = self._fd_search_request(page)
+        resp = utils.do_http_request(http_session, req, timeout=10)
+        resp.encoding = ENCODING
+        return self._fd_parse(resp, page)
+
+    def _fd_search_request(self, page):
+        params = {"page": page,
+                  "districtID": self.outer_id,
+                  "Region_ID": "",
+                  "projectAdr": "",
+                  "projectName": "",
+                  "startCod": "",
+                  "buildingType": 1,
+                  "houseArea": 0,
+                  "averagePrice": 0,
+                  "selState": "",
+                  "selCircle": 0}
+        return Request(url=DistrictFD.SEARCH_URL, method="GET", params=params)
+
+    def _fd_parse(self, resp, page):
+        """The html page has the following skeleton:
+        <HTML>...<body>
+            ...
+            <table>
+                <tr>
+                    <td>状态</td>
+                    <td>项目名称</td>
+                    <td>所在区县</td>
+                    ...
+                </tr>
+                ...
+                <tr valign="middle">
+                    <td>在售</td>
+                    <td><a href=proDetail.asp?projectID=ODYyOXwyMDE3LTYtMjJ8NjM=>嘉誉都汇广场</a></td>
+                    <td>殷行路1280号等</td>
+                    <td>1093</td>
+                    <td>81012.31</td>
+                    <td>杨浦区</td>
+                </tr>
+                ...
+                <table>
+                    <tr><td><td>第1页/共16页</td>
+                    ...
+                </table>
+            ...
+            </table>
+        </body></html>
+        """
+        soup = BeautifulSoup(resp.text, 'html.parser')
         community_list = []
 
         for table in soup.find_all('table'):
@@ -44,44 +88,48 @@ class DistrictFD(District):
             if len(target_cols) == 2:
                 break
         else:
-            raise Exception('parse error')
+            raise ParseError("can not find target content of fangdi.com.cn"
+                             " district page: %s" % resp.url)
 
-        try:
-            # parse community row
-            for row in table.find_all('tr'):
-                if not row.get('valign'):
-                    continue
-                tds = row.find_all('td', recursive=False)
+        # parse community row
+        for row in table.find_all('tr'):
+            if not row.get('valign'):
+                continue
+            tds = row.find_all('td', recursive=False)
 
-                if self.name != unicode(tds[5].string):
-                    logger.error('%s, %s', self.name, unicode(tds[5].string))
-                    raise Exception
+            if self.name != tds[5].string:
+                raise ParseError("request fangdi.com.cn district page with name"
+                                 " %s, but get page with name %s: %s" %
+                                 (self.name, tds[5].string, resp.url))
 
-                outer_id = (tds[1].a['href'].split('projectID=')[1]
-                            .decode('base64').split('|')[0])
-                c_info = {'outer_id': outer_id,
-                          'name': tds[1].get_text(),
-                          'location': unicode(tds[2].string),
-                          'total_number': int(tds[3].string),
-                          'total_area': float(tds[4].string)}
-                community_list.append(c_info)
+            href = urllib.parse.urlparse(tds[1].a["href"])
+            project_id = urllib.parse.parse_qs(href.query)["projectID"][0]
+            outer_id = CommunityFD.fd_decode_project_id(project_id)
 
-            # parse page number
-            sub_table = table.table
-            result = re.search(u'第(\d+)页/共(\d+)页',
-                               sub_table.tr.td.td.get_text())
-            current_page = int(result.group(1))
-            total_page = int(result.group(2))
-            if current_page != page_index:
-                raise Exception
-        except Exception as e:
-            logger.exception(e)
-            raise Exception('parse error')
+            c_info = {'outer_id': outer_id,
+                      'name': tds[1].get_text(),
+                      'location': tds[2].string,
+                      'total_number': int(tds[3].string),
+                      'total_area': float(tds[4].string)}
+            community_list.append(c_info)
+
+        # parse page number
+        sub_table = table.table
+        result = re.search("第(\d+)页/共(\d+)页",
+                           sub_table.tr.td.td.get_text())
+        current_page = int(result.group(1))
+        total_page = int(result.group(2))
+        if current_page != page:
+            raise ParseError("request fangdi.com.cn district page of page %s,"
+                             " but get page %s: %s"
+                             % (page, current_page, resp.url))
 
         if not community_list:
-            raise Exception('parse error')
+            raise ParseError("no community found in fangdi.com.cn district"
+                             " page: %s" % resp.url)
 
-        return community_list, total_page
+        return {"community_list": community_list,
+                "total_page": total_page}
 
     def __str__(self):
         return '%s-%s' % (self.id, self.name)
@@ -91,9 +139,9 @@ class CommunityFD(Community):
     total_number = Column(INTEGER)
     total_area = Column(FLOAT)
     location = Column(VARCHAR(1024))
+    company = Column(VARCHAR(1024))
     track_presale = Column(BOOLEAN)
     presale_url_name = Column(VARCHAR(1024))
-    company = Column(VARCHAR(1024))
     # presales = relationship('PresalePermit')
 
     district = relationship(DistrictFD, foreign_keys=Community.district_id)
@@ -102,6 +150,9 @@ class CommunityFD(Community):
         'polymorphic_identity': 'fangdi',
     }
 
+    PRESEIL_URL = "http://www.fangdi.com.cn/Presell.asp"
+    COMMUNITY_URL = "http://www.fangdi.com.cn/proDetail.asp"
+
     def __init__(self, name, outer_id, district, **kwargs):
         Community.__init__(self, name, outer_id, district)
         for key in ('total_number', 'total_area', 'location', 'company'):
@@ -109,29 +160,85 @@ class CommunityFD(Community):
                 setattr(self, key, kwargs[key])
         self.track_presale = True
 
-    def presale_url(self):
-        project_name = (self.presale_url_name or self.name).encode('gbk')
-        query = urllib.urlencode({'projectname': project_name})
-        return 'http://www.fangdi.com.cn/Presell.asp?projectID=%s&%s' % (
-            self.tmp_id, query)
+    def load_detail(self, http_session):
+        resp = utils.do_http_request(http_session, self._fd_community_request(),
+                                     timeout=10)
+        resp.encoding = ENCODING
+        c_info = self._fd_parse_community(resp)
+        self.company = c_info["company"]
+        self.presale_url_name = c_info["presale_url_name"]
 
-    def community_url(self):
-        return 'http://www.fangdi.com.cn/proDetail.asp?projectID=%s' % self.tmp_id
+    def fd_search_presale(self, http_session):
+        resp = utils.do_http_request(http_session, self._fd_presale_request(),
+                                     timeout=10)
+        resp.encoding = ENCODING
+        return self._fd_parse_presale(resp)
+
+    def check_presale_permit(self, db_session, http_session):
+
+        if self.presale_url_name is None:
+            self.load_detail(http_session)
+
+        presales = self.fd_search_presale(http_session)
+        old_presales = set(p.serial_number for p in self.presales)
+
+        for presale_info in presales:
+            if not presale_info['serial_number'] in old_presales:
+                db_session.add(PresalePermit(self, **presale_info))
+
+    @staticmethod
+    def fd_decode_project_id(content):
+        return codecs.decode(bytes(content, "ascii"), "base64"
+                             ).decode('ascii').split('|')[0]
+
+    def _fd_presale_request(self):
+        if self.presale_url_name is None:
+            raise DownloadError("presale_url_name not exist: community id = %s"
+                                % self.id)
+        project_name = self.presale_url_name.encode(ENCODING)
+        params = {"projectID": self._tmp_id,
+                  "projectname": project_name}
+        return Request(url=CommunityFD.PRESEIL_URL, method="GET", params=params)
+
+    def _fd_community_request(self):
+        return Request(url=CommunityFD.COMMUNITY_URL, method="GET",
+                       params={"projectID": self._tmp_id})
 
     @property
-    def tmp_id(self):
+    def _tmp_id(self):
         today = date.today().isoformat().replace('-0', '-')
         tail = random.randint(1, 99)
-        tmp_id = ('%s|%s|%s' % (self.outer_id, today, tail))
-        return tmp_id.encode('base64').strip()
+        tmp_id = bytes('%s|%s|%s' % (self.outer_id, today, tail), 'ascii')
+        return codecs.encode(tmp_id, "base64").strip().decode("ascii")
 
-    def parse_presale_page(self, content):
-        soup = BeautifulSoup(content, 'html.parser')
+    def _fd_parse_presale(self, resp):
+        """The html page has the following skeleton:
+        <html>
+        ...
+        <table>
+            <tr>
+                <td>编号</td>
+                <td>预售许可证/房地产权证</td>
+                <td>开盘日期</td>
+                <td>总套数</td>
+                <td>住宅套数</td>
+                <td>总面积</td>
+                <td>住宅面积</td>
+                <td>销售状态</td>
+            </tr>
+            <tr onclick=""> ...</tr>
+            <tr onclick=""> ...</tr>
+        </table>
+        ...
+        </html>
+        """
+        soup = BeautifulSoup(resp.text, 'html.parser')
         table = soup.table
         test_cols = table.tr.find_all('td', string=['开盘日期', '总套数'],
                                       recursive=False)
         if len(test_cols) != 2:
-            raise Exception('parse error')
+            raise ParseError("can not find target content of fangdi.com.cn"
+                             " presale page: %s" % resp.url)
 
         presale_list = []
         for row in table.find_all('tr', recursive=False):
@@ -139,23 +246,28 @@ class CommunityFD(Community):
                 continue
             tds = row.find_all('td', recursive=False)
 
+            serial_number = tds[0].get_text()
+
+            date_str = tds[2].get_text()
             try:
-                sale_date = date(
-                    *(int(e) for e in tds[2].get_text().split('-')))
-            except Exception as e:
+                sale_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
                 # date may be null
-                logger.warn('%s get date failed: %s', self.id, e.__str__())
+                logger.warning("parse presale date of serial number %s failed,"
+                               " community_id=%s: %s",
+                               serial_number, self.id, date_str)
                 sale_date = date.today()
 
             try:
                 status = tds[7].get_text()
             except Exception as e:
                 # status may be null
-                logger.warn('%s get status failed: %s', self.id, e.__str__())
+                logger.warning("get presale status of community %s failed: %s",
+                               self.id, e.__str__())
                 status = None
 
             presale_list.append(
-                {'serial_number': tds[0].get_text(),
+                {'serial_number': serial_number,
                  'description': tds[1].get_text(),
                  'sale_date': sale_date,
                  'total_number': int(tds[3].get_text()),
@@ -166,42 +278,81 @@ class CommunityFD(Community):
                  })
 
         if not presale_list:
-            raise Exception('parse error.')
+            raise ParseError("presale list not found in fangdi.com.cn presale"
+                             " page: %s" % resp.url)
 
         return presale_list
 
-    def parse_community_page(self, content):
-        soup = BeautifulSoup(content, 'html.parser')
+    def _fd_parse_community(self, resp):
+        """The html page has the following skeleton:
+        <html>
+        ...
+        ...
+            <table>
+                <tr>
+                    <td>项目名称：</td>
+                    ...
+                </tr>
+                <tr>
+                    <td>项目地址：</td>
+                    <td>殷行路1280号等</td>
+                    <td>所属板块：</td>
+                    <td>新江湾城板块</td>
+                </tr>
+                <tr>
+                    <td>企业名称：</td>
+                    <td>上海城投悦城置业有限公司</td>
+                    ...
+                </tr>
+        ...
+        ...
+            <iframe src='Presell.asp?projectID=ODYyOXwyMDE3LTYtMjJ8NjM=&projectname=嘉誉都汇广场'>
+            </iframe>
+        ...
+        </html>
+        """
+        soup = BeautifulSoup(resp.text, 'html.parser')
 
         for table in soup.find_all('table'):
+            # search recursively
             try:
-                if table.tr.td.get_text() == u'项目名称：':
+                if table.tr.td.get_text() == '项目名称：':
                     break
-            except Exception:
+            except AttributeError:
                 continue
         else:
-            raise Exception('fangdi parse error: %s' % self.id)
+            raise ParseError("can not find target content in fangdi.com.cn"
+                             " community page: %s" % resp.url)
 
-        c_info = {}
         trs = table.find_all('tr', recursive=False)
 
         # get area
         tds = trs[1].find_all('td', recursive=False)
-        c_info['area_name'] = tds[3].get_text()
+        area_name = tds[3].get_text()
 
         # get company
         tds = trs[2].find_all('td', recursive=False)
-        c_info['company'] = tds[1].get_text()
+        company = tds[1].get_text()
 
-        c_info['presale_url_name'] = soup.iframe['src'].split('projectname=')[1]
+        # get community name for presale
+        src = urllib.parse.urlparse(soup.iframe['src'])
+        params = urllib.parse.parse_qs(src.query)
+        project_id = self.fd_decode_project_id(params["projectID"][0])
+        if self.outer_id != project_id:
+            raise ParseError("request fangdi.com.cn community page with "
+                             "outer_id %s, but get outer_id %s: %s"
+                             % (self.outer_id, project_id, resp.url))
+        presale_url_name = params["projectname"][0]
 
-        return c_info
+        return {"area_name": area_name,
+                "company": company,
+                "presale_url_name": presale_url_name}
 
     def __str__(self):
         return '%s, %s' % (self.district.name, self.name)
 
 
-class PresalePermit(BaseMixin, Base):
+class PresalePermit(IdMixin, Base):
     __tablename__ = 'presale_permit'
 
     community_id = Column(INTEGER, ForeignKey('community.id'), nullable=False)
@@ -217,129 +368,105 @@ class PresalePermit(BaseMixin, Base):
     normal_area = Column(FLOAT)
     status = Column(VARCHAR(64))
 
+    def __init__(self, community, **kwargs):
+        Base.__init__(self, community=community, **kwargs)
+
 
 class BatchJobFD(BatchJob):
     __mapper_args__ = {
-        'polymorphic_identity': 'fangdi',
+        'polymorphic_identity': b"fangdi" + bytes(2),
     }
 
-    def _initial(self, session):
-        for d in session.query(DistrictFD).all():
-            job = DistrictJob(d, self, 1)
-            session.add(job)
-            first_page = job.get_web_page(cache=True)
-            cs, total_page = job.district.parse_fd_html(first_page, 1)
-            for i in range(total_page - 1):
-                session.add(DistrictJob(d, self, i + 2))
-            logger.info('district job init finish: %s', d)
+    def _start(self, district_ids=None):
 
-    def _start(self, session):
-        c_set = (session.query(CommunityFD.outer_id, CommunityFD.track_presale)
-                 .all())
-        notrack_outer_ids = set(c.outer_id for c in c_set
-                                if not c.track_presale)
+        result = base.FINISHED
 
-        for job_cls in (DistrictJob, CommunityJobFD, PresaleJob):
-            logger.info('%s begin...', job_cls)
-            jobs = (session.query(job_cls)
-                    .filter_by(batch_job_id=self.id)
-                    .filter(Job.status.in_(('ready', 'retry')))
-                    .all())
-            for job in jobs:
-                if job_cls is DistrictJob:
-                    job.start(session, notrack_outer_ids=notrack_outer_ids,
-                              **self.job_args)
-                else:
-                    job.start(session, **self.job_args)
+        for district, job in self.get_district_and_job(district_ids):
+            if job is not None and job.status == base.FINISHED:
+                continue
+            elif job is None:
+                job = DistrictJob(district, self)
+                self.db_session.add(job)
+                self.commit()
+
+            try:
+                job.start(self.db_session, self.http_session,
+                          auto_commit=self.auto_commit)
+            except JobError as e:
+                logger.error("DistrictJob of id %s failed: %s", job.id, e)
+                job.status = base.FAILED
+                self.commit()
+                result = base.FAILED
+
+        return result
+
+    def get_district_and_job(self, district_ids=None):
+        if district_ids is not None:
+            filter_ = DistrictFD.id.in_(district_ids)
+        else:
+            filter_ = None
+
+        return self._get_obj_and_job(DistrictFD, DistrictJob,
+                                     DistrictJob.district_id == DistrictFD.id,
+                                     filter_=filter_,
+                                     order=DistrictFD.outer_id)
 
 
 class DistrictJob(Job):
-    district_id = Column(INTEGER, ForeignKey('district.id'))
-    district = relationship(DistrictFD, foreign_keys=district_id)
+    district_id = Column(INTEGER)
+    district = relationship(DistrictFD, foreign_keys=district_id,
+                            primaryjoin=district_id==DistrictFD.id)
 
     __mapper_args__ = {
         'polymorphic_identity': 'district_job',
     }
 
-    def __init__(self, district, batch_job, page):
-        Job.__init__(self, batch_job, parameters={'page': page})
+    def __init__(self, district, batch_job):
+        Job.__init__(self, batch_job)
         self.district = district
         self.district_id = district.id
 
-    def inner_start(self, session, notrack_outer_ids=None):
-        page_index = self.parameters['page']
-        content = self.get_web_page()
-        community_list, total_page = self.district.parse_fd_html(
-                                                    content, page_index)
-        # add community job
-        for c_info in community_list:
-            if c_info['outer_id'] in notrack_outer_ids:
-                continue
-            community = (session.query(CommunityFD)
-                         .filter_by(outer_id=c_info['outer_id'])
-                         .first())
-            if not community:
-                community = CommunityFD(c_info.pop('name'),
-                                        c_info.pop('outer_id'), self.district,
-                                        **c_info)
-                session.add(community)
-                session.add(CommunityJobFD(community, self.batch_job))
-                logger.info('new community: %s', community)
+    def _start(self):
 
-            session.add(PresaleJob(community, self.batch_job))
+        result = base.FINISHED
 
-    def web_uri(self):
-        page_index = self.parameters['page']
-        return self.district.fd_search_url(page_index)
+        existing_outer_ids = {}
+        skip_outer_ids = set()
+        query = (self.db_session.query(CommunityFD)
+                 .filter_by(district_id=self.district.id))
+        for c in query.all():
+            existing_outer_ids[c.outer_id] = c
+            if not c.track_presale:
+                skip_outer_ids.add(c.outer_id)
 
-    def web_encode(self):
-        return 'gbk'
+        # parse each page
+        for content in PagesIterator(self, self.district.fd_search):
+            c_list = content["community_list"]
+            for c_info in c_list:
+                outer_id = c_info.pop('outer_id')
+                if outer_id not in existing_outer_ids:
+                    c = CommunityFD(c_info.pop('name'), outer_id, self.district,
+                                    **c_info)
+                    self.db_session.add(c)
+                    self.db_session.flush()
+                    existing_outer_ids[outer_id] = c
+                elif outer_id not in skip_outer_ids:
+                    c = existing_outer_ids[outer_id]
+                else:
+                    c = None
 
-    def disk_uri(self):
-        return 'fd-district-%s-%s-%s.html' % (
-            self.district.id, self.district.outer_id_fd,
-            self.parameters['page'])
+                if c is not None:
+                    try:
+                        c.check_presale_permit(self.db_session,
+                                               self.http_session)
+                    except (DownloadError, ParseError) as e:
+                        self.db_session.rollback()
+                        raise JobError("%s: %s" % (e.__class__.__name__, e))
 
+            self.commit()
 
-class CommunityJobFD(JobWithCommunity):
-    __mapper_args__ = {
-        'polymorphic_identity': 'community_job_fangdi',
-    }
+        return result
 
-    def inner_start(self, session, **kwargs):
-        content = self.get_web_page()
-        c_info = self.community.parse_community_page(content)
-
-        for key, value in c_info.iteritems():
-            setattr(self.community, key, value)
-
-    def web_uri(self):
-        return self.community.community_url()
-
-    def web_encode(self):
-        return 'gbk'
-
-
-class PresaleJob(JobWithCommunity):
-    __mapper_args__ = {
-        'polymorphic_identity': 'presale_job',
-    }
-
-    def inner_start(self, session, **kwargs):
-        content = self.get_web_page()
-        presales = self.community.parse_presale_page(content)
-        old_presales = set(p.serial_number for p in self.community.presales)
-
-        for presale_info in presales:
-            if not presale_info['serial_number'] in old_presales:
-                presale_info['community_id'] = self.community.id
-                session.add(PresalePermit(**presale_info))
-
-    def web_uri(self):
-        return self.community.presale_url()
-
-    def web_encode(self):
-        return 'gbk'
 
 __all__ = ['DistrictFD', 'CommunityFD', 'PresalePermit', 'BatchJobFD',
-           'DistrictJob', 'CommunityFD', 'PresaleJob']
+           'DistrictJob']
