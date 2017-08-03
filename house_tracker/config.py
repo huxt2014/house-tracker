@@ -52,14 +52,23 @@ class Config(metaclass=SingletonMeta):
     database = None
     db_url = None
     lj_number_per_page = 30
+    email_list = None
+    smtp = None
 
     def __init__(self):
         import house_tracker_settings
         for name in ('log_file', 'log_config', 'data_dir', 'database',
-                     "lj_number_per_page"):
+                     "lj_number_per_page", "smtp"):
             v = getattr(house_tracker_settings, name, None)
             if v is not None:
                 setattr(self, name, v)
+
+        email_list = getattr(house_tracker_settings, "email_list", None)
+        if email_list is not None:
+            if isinstance(email_list, list) or isinstance(email_list, tuple):
+                self.email_list = [add for add in email_list]
+            else:
+                self.email_list = [email_list]
 
         self.check()
 

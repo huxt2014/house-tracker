@@ -10,7 +10,7 @@ from datetime import date, datetime
 from bs4 import BeautifulSoup
 from sqlalchemy import Column, ForeignKey
 from sqlalchemy.dialects.mysql import VARCHAR, INTEGER, BOOLEAN, FLOAT, DATE
-from sqlalchemy.orm import relationship, backref
+from sqlalchemy.orm import relationship, backref, joinedload
 from requests import Request
 
 from . import base
@@ -410,6 +410,57 @@ class BatchJobFD(BatchJob):
                                      DistrictJob.district_id == DistrictFD.id,
                                      filter_=filter_,
                                      order=DistrictFD.outer_id)
+
+    def mail_content(self):
+
+        if self.status != base.FINISHED or self.db_session is None:
+            return BatchJob.mail_content(self)
+
+        content = "%s \r\n" % BatchJob.mail_content(self)
+
+        content += "新出现的小区:\r\n"
+        new_cs = {}
+        rs = (self.db_session.query(CommunityFD)
+              .filter(CommunityFD.created_at.between(self.created_at,
+                                                     self.last_modified_at))
+              .all())
+        for c in rs:
+            new_cs[c.id] = c
+
+        if not new_cs:
+            content += "    无 \r\n"
+        else:
+            for c in new_cs.values():
+                line = "    %s, %s \r\n" % (
+                       c.name, c._fd_community_request().prepare().url)
+                content += line
+
+        content += "新发预售证的小区:\r\n"
+        rs = (self.db_session.query(PresalePermit)
+              .options(joinedload("community"))
+              .filter(PresalePermit.created_at.between(self.created_at,
+                                                       self.last_modified_at))
+              .all())
+
+        new_ps = []
+        for p in rs:
+            if p.community.id not in new_cs:
+                new_ps.append(p)
+                new_cs[p.community.id] = p.community
+
+        if not new_ps:
+            content += "    无 \r\n"
+        else:
+            for p in new_ps:
+                c = p.community
+                line = "    %s, %s \r\n" % (
+                    c.name, c._fd_community_request().prepare().url)
+                content += line
+
+        if new_cs or new_ps:
+            content += "注：链接当日内有效"
+
+        return content
 
 
 class DistrictJob(Job):

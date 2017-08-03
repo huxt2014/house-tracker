@@ -10,7 +10,7 @@ import alembic.util
 import alembic.config
 from sqlalchemy.orm import joinedload
 
-from . import models
+from . import models, mail
 from .config import Config
 from .db import Session
 
@@ -113,6 +113,9 @@ class Start(SubCommand):
         start_list = [(self.cmd_args.fangdi, models.BatchJobFD, []),
                       (self.cmd_args.lianjia, models.BatchJobLJ,
                        ["lj_number_per_page"])]
+
+        mail.send_when_batch_job_done(self.config)
+
         for exist, cls, extra_params in start_list:
             if exist:
                 kwargs = {"config": copy.deepcopy(self.config),

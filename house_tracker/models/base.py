@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 
 import requests
+import blinker
 from sqlalchemy import (Column, ForeignKey, types, inspect, desc,
                         PrimaryKeyConstraint, ForeignKeyConstraint)
 from sqlalchemy.dialects.mysql import BINARY, VARCHAR, INTEGER, DATETIME, TEXT
@@ -23,6 +24,8 @@ RUNNING = "running"
 FAILED = "failed"
 FINISHED = "finished"
 RETRY = "retry"
+
+sig_batch_job_done = blinker.signal("batch_job_done")
 
 
 class PickleType(types.PickleType):
@@ -227,6 +230,9 @@ class BatchJob(Base, StatusMixin, SessionMixin):
 
         if auto_commit:
             db_session.commit()
+
+        sig_batch_job_done.send(batch_job)
+
         return batch_job
 
     @staticmethod
@@ -277,7 +283,20 @@ class BatchJob(Base, StatusMixin, SessionMixin):
         return FINISHED
 
     def __str__(self):
-        return '%s-BatchJob-%s-%s' % (id(self), self.type, self.batch_number)
+        bt = self.type.decode().replace("\0", "")
+        content = "%s %s 第 %s 次搜索，" % (
+                  self.created_at.date(), bt, self.batch_number)
+        if self.status == FAILED:
+            content += "失败"
+        elif self.status == FINISHED:
+            content += "完成"
+        else:
+            content += "准备开始"
+
+        return content
+
+    def mail_content(self):
+        return self.__str__()
 
     __repr__ = __str__
 
