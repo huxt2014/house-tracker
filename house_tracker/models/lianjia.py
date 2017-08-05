@@ -1,5 +1,6 @@
 # coding=utf-8
 
+import re
 import math
 import logging
 import functools
@@ -38,11 +39,13 @@ class CommunityLJ(Community):
     SEARCH_URL = 'http://sh.lianjia.com/ershoufang/d%sq%ss20'
     NUMBER_PER_PAGE = 30
 
+    p_build_year = re.compile('\|\s*(\d+)\s*年建')
+
     def __init__(self, name, outer_id, area):
         Community.__init__(self, name, outer_id, area.district, area=area)
 
     def __str__(self):
-        return self.name
+        return "%s %s %s" % (self.id, self.outer_id, self.name)
 
     def lj_search(self, http_session, page, number_per_page=None):
         req = self._lj_search_request(page)
@@ -60,8 +63,8 @@ class CommunityLJ(Community):
         self.sold_last_season = sold_last_season
         self.view_last_month = view_last_month
 
-    @staticmethod
-    def _lj_parse(resp, page, number_per_page):
+    @classmethod
+    def _lj_parse(cls, resp, page, number_per_page):
 
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -75,13 +78,18 @@ class CommunityLJ(Community):
                              " %s." % (resp.url, e))
 
         # check page index
-        on_page = int(soup.find("span", class_="current").get_text())
-        if page != on_page:
-            raise ParseError("request lianjia.com community page of page %s,"
-                             " but get page %s: %s" % (page, on_page, resp.url))
+        if total_num == 0:
+            # no house_found
+            on_page = 0
+        else:
+            on_page = int(soup.find("span", class_="current").get_text())
+            if page != on_page:
+                raise ParseError("request lianjia.com community page of page"
+                                 " %s, but get page %s: %s" % (
+                                 page, on_page, resp.url))
 
         # get community info
-        if on_page == 1:
+        if on_page <= 1:
             li_tags = soup.find("div", class_="m-side-bar").ul.find_all("li")
             span_c = "num strong-num"
             try:
@@ -102,11 +110,9 @@ class CommunityLJ(Community):
         else:
             c_info = None
 
-        # todo: no houses found
-
         # get house info
         houses_info = []
-        info_list = soup.find_all("div", class_="info")
+        info_list = soup.find_all("div", class_="info") or []
         for info in info_list:
             detail = {"outer_id": info.div.a["key"]}
 
@@ -117,8 +123,11 @@ class CommunityLJ(Community):
             detail["area"] = float(cols[1].strip().replace("平", ""))
             detail["floor"] = cols[2].strip()
 
-            cols = rows[1].span.get_text().split("|")
-            detail["build_year"] = int(cols[-1].strip().replace("年建", ""))
+            r = cls.p_build_year.search(rows[1].span.get_text())
+            if r:
+                detail["build_year"] = int(r.groups()[0])
+            else:
+                detail["build_year"] = None
 
             houses_info.append(detail)
 
@@ -298,6 +307,11 @@ class BatchJobLJ(BatchJob):
                 self.commit()
                 result = base.FAILED
 
+        # is not able to put all the check job in the unit test,
+        # so check the result when finished.
+        if result == base.FINISHED:
+            result = self.check_result()
+
         return result
 
     def get_community_and_job(self, community_outer_ids):
@@ -310,6 +324,52 @@ class BatchJobLJ(BatchJob):
                                      CommunityJob.community_id == CommunityLJ.id,
                                      filter_=filter_,
                                      order=CommunityLJ.outer_id)
+
+    def check_result(self):
+        # each community should has a record for this batch
+        join_cond = (CommunityLJ.id == CommunityRecordLJ.community_id) & (
+                     CommunityRecordLJ.batch_number == self.batch_number)
+        null_num = (self.db_session.query(func.count(CommunityLJ.id))
+                    .select_from(CommunityLJ)
+                    .outerjoin(CommunityRecordLJ, join_cond)
+                    .filter(CommunityRecordLJ.batch_number.is_(None))
+                    .scalar())
+        if null_num > 0:
+            logger.error("failed to track some lianjia communities")
+            return base.FAILED
+
+        # number of house_record should equal the number of house that available
+        num_record = (self.db_session.query(func.count(HouseRecordLJ.id))
+                      .filter_by(batch_number=self.batch_number)
+                      .scalar())
+        num_house = (self.db_session.query(func.count(HouseLJ.id))
+                     .filter(HouseLJ.available.is_(True))
+                     .scalar())
+        if num_record != num_house:
+            logger.error("number of house_record and number of house that"
+                         " available mismatch.")
+            return base.FAILED
+
+        # number of new house and missing house should match
+        rs_cr = (self.db_session.query(func.sum(CommunityRecordLJ.new_number
+                                                ).label("new_number"),
+                                       func.sum(CommunityRecordLJ.missing_number
+                                                ).label("missing_number"))
+                 .filter_by(batch_number=self.batch_number)
+                 .one())
+        nc = func.sum(case([(HouseLJ.new.is_(True), 1)], else_=0)
+                              ).label("new_number")
+        mc = func.sum(
+                case([(HouseLJ.last_batch_number == self.batch_number-1, 1)],
+                     else_=0)).label("missing_number")
+        rs_house = (self.db_session.query(nc, mc).one())
+
+        if (rs_cr.new_number != rs_house.new_number
+           or rs_cr.missing_number != rs_house.missing_number):
+            logger.error("new_number or missing number mismatch.")
+            return base.FAILED
+
+        return base.FINISHED
 
 
 class CommunityJob(JobWithCommunity):
@@ -351,8 +411,6 @@ class CommunityJob(JobWithCommunity):
                                     **h_info)
                     price_change = None
 
-                # todo: deal with duplicate house
-
                 if (house.last_batch_number is None
                    or house.last_batch_number != self.batch_number):
                     h_record = HouseRecordLJ(house, self.batch_job,
@@ -369,8 +427,8 @@ class CommunityJob(JobWithCommunity):
                 HouseLJ.available_change_times:
                     HouseLJ.available_change_times + 1}
         (self.db_session.query(HouseLJ)
-         .filter_by(last_batch_number=self.batch_number - 1,
-                    community_id=self.community.id)
+         .filter_by(community_id=self.community.id)
+         .filter(HouseLJ.last_batch_number < self.batch_number)
          .update(data))
 
         # new number and miss number
