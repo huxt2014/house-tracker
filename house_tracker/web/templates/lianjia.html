@@ -1,0 +1,251 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- The above 3 meta tags *must* come first in the head; any other head content must come *after* these tags -->
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <title>lianjia</title>
+
+    <!-- jQuery -->
+    <script src="/static/js/jquery-3.2.1.min.js"></script>
+    <!-- echarts -->
+    <script src="/static/js/echarts.common.min.js"></script>
+
+    <!-- Bootstrap 3.3.7 -->
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Custom styles -->
+    <link href="/static/css/dashboard.css" rel="stylesheet">
+
+    <script>
+      var district = null;
+      var areas_of_district = {};
+      var cs_of_area = {};
+      var myChart = null;
+
+      function registry_event(){
+        $("select#district-select").change(on_district_change);
+        $("select#area-select").change(on_area_change);
+        $("button#refresh_btn").click(refresh_chart);
+      }
+
+
+      function on_district_change(){
+        ele_list = new Array($("select#area-select"), $("select#community-select"));
+        for(var i = 0; i < ele_list.length; i++){
+          ele_list[i].empty();
+          ele_list[i].append("<option value = 0 selected = 'selected'>全部</option>");
+        }
+
+        var district_id = $("select#district-select").val();
+
+        if (district_id != 0){
+          if (areas_of_district[district_id] == null){
+            $.getJSON("/api/area?district_id="+district_id, function(result){
+              set_select(ele_list[0], result.data);
+              areas_of_district[district_id] = result.data;
+            });
+          } else {
+            set_select(ele_list[0], areas_of_district[district_id]);
+          }
+        }
+      }
+
+
+      function on_area_change(){
+        var ele = $("select#community-select");
+        ele.empty();
+        ele.append("<option value = 0 selected = 'selected'>全部</option>");
+
+        var area_id = $("select#area-select").val();
+
+        if (area_id != 0){
+          if (cs_of_area[area_id] == null){
+            $.getJSON("/api/community?area_id="+area_id, function(result){
+              set_select(ele, result.data);
+              cs_of_area[area_id] = result.data;
+            });
+          }else{
+            set_select(ele, cs_of_area[area_id]);
+          }
+        }
+      }
+
+      function set_select(ele, items){
+        for (var i = 0; i < items.length; i++){
+          item = items[i];
+          var op = "<option value = " + item.id + ">" + item.name + "</option>";
+          ele.append(op);
+        }
+      }
+
+      function refresh_chart(){
+        var url = "/api/avg_price?month=" + $("select#period-select").val();
+
+        if ($("select#community-select").val() != 0){
+          url = url + "&community_id=" + $("select#community-select").val();
+        }else if ($("select#area-select").val() != 0){
+          url = url + "&area_id=" + $("select#area-select").val();
+        }else if ($("select#district-select").val() != 0){
+          url = url + "&district_id=" + $("select#district-select").val();
+        }else{
+          alert("请在区县、板块、小区中至少选择一个");
+        }
+
+        $.getJSON(url, function(result){
+          x = {"type": "category",
+               "data": result.data.x};
+          s = [];
+          for(var i=0; i < result.data.communities.length; i++){
+            c = result.data.communities[i];
+            s.push({"data": c.data, "name": c.name + " " + c.id, "type": "line"});
+          }
+
+          myChart.setOption({
+            title: {
+              text: '均价'
+            },
+            tooltip: {},
+            legend: {
+               data:['销量']
+            },
+            yAxis: {min: result.data.y_min},
+            xAxis: x,
+            series: s
+          },
+          {notMerge: true});
+        });
+
+      }
+
+      function ini_data(){
+        $.getJSON("/api/district", function(result){
+          districts = result.data;
+          $("select#district-select").append("<option value = 0 selected = 'selected'>全部</option>");
+
+          for (var i = 0; i < districts.length; i++){
+            d = districts[i];
+            var op = "<option value = " + d.id + ">" + d.name + "</option>";
+            $("select#district-select").append(op);
+          }
+        });
+
+        myChart = echarts.init(document.getElementById('chart'));
+        myChart.setOption({
+          title: {
+            text: '均价'
+          },
+          tooltip: {},
+          legend: {
+             data:['销量']
+          },
+          xAxis: {
+            type: "time",
+            data: []
+          },
+          yAxis: {},
+          series: [
+          ]
+        });
+
+        registry_event();
+      }
+
+      $(document).ready(ini_data);
+    </script>
+
+  </head>
+
+  <body>
+    <nav class="navbar navbar-inverse navbar-fixed-top">
+      <div class="container-fluid">
+        <div class="navbar-header">
+          <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar" aria-expanded="false" aria-controls="navbar">
+            <span class="sr-only">Toggle navigation</span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+          </button>
+          <a class="navbar-brand" href="#">数据中心</a>
+        </div>
+        <div id="navbar" class="navbar-collapse collapse">
+          <ul class="nav navbar-nav navbar-right">
+            <li><a href="#">Dashboard</a></li>
+            <li><a href="#">Settings</a></li>
+            <li><a href="#">Profile</a></li>
+            <li><a href="#">Help</a></li>
+          </ul>
+          <form class="navbar-form navbar-right">
+            <input type="text" class="form-control" placeholder="Search...">
+          </form>
+        </div>
+      </div>
+    </nav>
+
+
+    <div class="container-fluid">
+      <div class="row">
+
+        <!-- side bar -->
+        <div class="col-sm-3 col-md-2 sidebar">
+          <ul class="nav nav-sidebar">
+            <li class="active"><a href="#">链家统计 <span class="sr-only">(current)</span></a></li>
+          </ul>
+
+        </div>
+        <!-- side bar end -->
+
+        <!-- main board -->
+        <div class="col-sm-9 col-sm-offset-3 col-md-10 col-md-offset-2 main">
+
+          <div class="row">
+            <label class="col-md-1 text-center">区县</label>
+            <div class="col-md-2">
+              <select id="district-select" class="form-control"></select>
+            </div>
+            <label class="col-md-1 center-block">板块</label>
+            <div class="col-md-2">
+              <select id="area-select" class="form-control">
+                <option value = 0  selected = "selected">全部</option>
+              </select>
+            </div>
+            <label class="col-md-1">小区</label>
+            <div class="col-md-2">
+              <select id="community-select" class="form-control">
+                <option value = 0  selected = "selected">全部</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
+            <label class="col-md-1 text-center">时间</label>
+            <div class="col-md-2">
+              <select id="period-select" class="form-control">
+                <option value = 12  selected = "selected">一年</option>
+                <option value = 18>一年半</option>
+                <option value = 24>两年</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row"><button type="button" class="btn btn-primary" id="refresh_btn">查询</button></div>
+
+          <div id="chart" style="width: 900px;height:600px;"></div>
+
+        </div>
+        <!-- main board end -->
+
+      </div>
+    </div> <!-- /container -->
+
+    test2
+    <!-- Bootstrap 3.3.7 -->
+    <script src="/static/js/bootstrap.min.js"></script>
+
+  </body>
+</html>

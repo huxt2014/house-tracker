@@ -10,7 +10,7 @@ import alembic.util
 import alembic.config
 from sqlalchemy.orm import joinedload
 
-from . import models, mail
+from . import models, mail, web
 from .config import Config
 from .db import Session
 
@@ -136,7 +136,8 @@ class Start(SubCommand):
 class RunServer(SubCommand):
 
     def start(self):
-        print('runserver')
+        app = web.get_application(self.config, self.cmd_args)
+        app.run(host="0.0.0.0", port=8080, debug=self.cmd_args.debug)
 
 
 class Dump(SubCommand):
