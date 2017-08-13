@@ -98,7 +98,7 @@ def real_path(path, directory=False):
 
     try:
         if not directory:
-            d = os.path.basename(path)
+            d = os.path.dirname(path)
             os.makedirs(d, exist_ok=True)
             f = tempfile.NamedTemporaryFile(dir=d)
             f.close()

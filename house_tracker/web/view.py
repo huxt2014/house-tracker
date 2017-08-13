@@ -80,7 +80,7 @@ joined_table_1 = (
 @app.route('/api/avg_price', methods=['GET'])
 def avg_price():
     dt_end = datetime.now()
-    dt_begin = dt_end - timedelta(minutes=525600)
+    dt_begin = dt_end - timedelta(hours=365*24*float(request.args["period"]))
 
     query = (select([HouseRecordLJ.community_id,
                      func.date(BatchJobLJ.created_at).label("created_at"),

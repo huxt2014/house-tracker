@@ -97,9 +97,15 @@
           alert("请在区县、板块、小区中至少选择一个");
         }
 
+        url = url + "&period=" + $("select#period-select").val();
+
         $.getJSON(url, function(result){
           x = {"type": "category",
-               "data": result.data.x};
+               "data": result.data.x,
+               "axisLabel": {
+                 "interval": 0,
+                 "rotate": -30},
+               };
           s = [];
           for(var i=0; i < result.data.communities.length; i++){
             c = result.data.communities[i];
@@ -114,7 +120,7 @@
             legend: {
                data:['销量']
             },
-            yAxis: {min: result.data.y_min},
+            yAxis: {min: 3},
             xAxis: x,
             series: s
           },
@@ -226,16 +232,17 @@
             <label class="col-md-1 text-center">时间</label>
             <div class="col-md-2">
               <select id="period-select" class="form-control">
-                <option value = 12  selected = "selected">一年</option>
-                <option value = 18>一年半</option>
-                <option value = 24>两年</option>
+                <option value = 0.5>半年</option>
+                <option value = 1  selected = "selected">一年</option>
+                <option value = 1.5>一年半</option>
+                <option value = 2>两年</option>
               </select>
             </div>
           </div>
 
-          <div class="row"><button type="button" class="btn btn-primary" id="refresh_btn">查询</button></div>
+          <div class="row col-md-offset-10"><button type="button" class="btn btn-primary" id="refresh_btn">查询</button></div>
 
-          <div id="chart" style="width: 900px;height:600px;"></div>
+          <div id="chart" class="row" style="height:550px;"></div>
 
         </div>
         <!-- main board end -->
