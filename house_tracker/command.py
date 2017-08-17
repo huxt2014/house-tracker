@@ -1,6 +1,7 @@
 # coding=utf-8
 
 import os
+import sys
 import copy
 import argparse
 import logging.config
@@ -9,10 +10,11 @@ from threading import Thread
 import alembic.util
 import alembic.config
 from sqlalchemy.orm import joinedload
+import gunicorn.app.wsgiapp
 
 from . import models, mail, web
 from .config import Config
-from .db import Session
+from . import db
 
 
 logger = logging.getLogger(__name__)
@@ -43,7 +45,8 @@ class Command:
     subparser.add_argument('-t', '--target', action='store', nargs='?')
 
     # runserver
-    subparsers.add_parser('runserver')
+    subparser = subparsers.add_parser('runserver')
+    subparser.add_argument("-D", "--daemon", action="store_true")
 
     def __new__(cls):
         cmd_args = cls.parser.parse_args()
@@ -108,6 +111,7 @@ class Migrate(SubCommand):
 class Start(SubCommand):
 
     def start(self):
+        db.init(self.config, debug=self.cmd_args.debug)
         self.cmd_args.auto_commit = True
         threads = []
         start_list = [(self.cmd_args.fangdi, models.BatchJobFD, []),
@@ -135,15 +139,30 @@ class Start(SubCommand):
 
 class RunServer(SubCommand):
 
+    APP_MODULE = "house_tracker.web.wsgi:app"
+    CONFIG = "python:house_tracker_settings"
+
     def start(self):
-        app = web.get_application(self.config, self.cmd_args)
-        app.run(host="0.0.0.0", port=8080, debug=self.cmd_args.debug)
+        if self.config.debug:
+            app = web.get_application(self.config)
+            app.run(host="127.0.0.1", port=8080, debug=True)
+        else:
+            self.run_gunicorn()
+
+    def run_gunicorn(self):
+        argv = ["gunicorn", "-c", self.CONFIG]
+        if self.config.daemon:
+            argv.append("--daemon")
+        argv.append(self.APP_MODULE)
+        sys.argv = argv
+        gunicorn.app.wsgiapp.run()
 
 
 class Dump(SubCommand):
 
     def start(self):
-        session = Session(self.config)
+        db.init(self.config, debug=self.cmd_args.debug)
+        session = db.Session()
         path = self.cmd_args.target or '.'
         path = os.path.abspath(os.path.realpath(path))
         if self.cmd_args.fangdi:

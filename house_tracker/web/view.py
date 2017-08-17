@@ -4,11 +4,11 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
-from flask import (render_template, redirect, url_for, jsonify, request, abort)
+from flask import (render_template, redirect, url_for, jsonify, request, g)
 from sqlalchemy import select, func
 
 from house_tracker.models import *
-from . import app
+from . import app, cached
 
 
 def my_jsonify(status="200", **kwargs):
@@ -28,18 +28,20 @@ def lianjia():
 
 
 @app.route('/api/district', methods=['GET'])
+@cached(timeout=604800)  # one week
 def district():
-    districts = app.db_session.query(District).all()
+    districts = g.db_session.query(District).all()
     data = [{"id": d.id,
              "name": d.name} for d in districts]
     return jsonify(data=data)
 
 
 @app.route('/api/area', methods=['GET'])
+@cached(timeout=604800)  # one week
 def area():
     district_id = request.args.get("district_id", "null")
 
-    query = app.db_session.query(Area)
+    query = g.db_session.query(Area)
     if district_id != 'null':
         query = query.filter_by(district_id=district_id)
 
@@ -49,10 +51,11 @@ def area():
 
 
 @app.route('/api/community', methods=['GET'])
+@cached()
 def community():
     area_id = request.args.get("area_id", "null")
 
-    query = app.db_session.query(CommunityLJ)
+    query = g.db_session.query(CommunityLJ)
     if area_id != 'null':
         query = query.filter_by(area_id=area_id)
 
@@ -78,6 +81,7 @@ joined_table_1 = (
 
 
 @app.route('/api/avg_price', methods=['GET'])
+@cached()
 def avg_price():
     dt_end = datetime.now()
     dt_begin = dt_end - timedelta(hours=365*24*float(request.args["period"]))

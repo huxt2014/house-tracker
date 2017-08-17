@@ -198,7 +198,7 @@ class BatchJob(Base, StatusMixin, SessionMixin):
     def run_batch(cls, config=None, cmd_args=None, db_session=None,
                   auto_commit=True, **kwargs):
 
-        db_session = db_session or db.Session(config)
+        db_session = db_session or db.Session()
         http_session = requests.Session()
         batch_job = BatchJob.get_batch_job(cls, db_session,
                                            create=cmd_args.create,

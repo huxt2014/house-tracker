@@ -22,7 +22,8 @@ class Test(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.config = config.Config()
-        cls.db_session = db.Session(cls.config)
+        db.init(cls.config)
+        cls.db_session = db.Session()
 
         try:
             cls.district = (cls.db_session.query(DistrictFD)

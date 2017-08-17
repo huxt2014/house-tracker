@@ -11,7 +11,8 @@ class Test(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.config = config.Config()
-        cls.db_session = db.Session(cls.config)
+        db.init(cls.config)
+        cls.db_session = db.Session()
         cls.root = "/tmp/house_tracker_test"
         try:
             shutil.rmtree(cls.root)
