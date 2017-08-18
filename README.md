@@ -24,7 +24,7 @@ pip install dist/house_tracker-1.0.0.tar.gz
 house-tracker migrate upgrade head
 ```
 
-仅在Python 3.4 3.5下运行过。
+仅在Python 3.4 3.5下运行过。基础数据见data.sql。
 
 
 
