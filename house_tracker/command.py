@@ -33,11 +33,16 @@ class Command:
     subparsers._name_parser_map['migrate'] = alembic_cmd.parser
 
     # start
-    subparser = subparsers.add_parser('start')
-    subparser.add_argument('--fangdi', action='store_true')
-    subparser.add_argument('--lianjia', action='store_true')
-    subparser.add_argument('-c', '--create', action='store_true')
-    subparser.add_argument('-f', '--force', action='store_true')
+    subparser = subparsers.add_parser('start', help="start batch job")
+    subparser.add_argument('--fangdi', action='store_true',
+                           help="start batch job for fangdi.com")
+    subparser.add_argument('--lianjia', action='store_true',
+                           help="start batch job for lianjia.com")
+    subparser.add_argument('-c', '--create', action='store_true',
+                           help="create a new batch job")
+    subparser.add_argument('-f', '--force', action='store_true',
+                           help="create a new batch job even if the last batch"
+                                " job not finished")
 
     # dump
     subparser = subparsers.add_parser('dump')
@@ -45,8 +50,9 @@ class Command:
     subparser.add_argument('-t', '--target', action='store', nargs='?')
 
     # runserver
-    subparser = subparsers.add_parser('runserver')
-    subparser.add_argument("-D", "--daemon", action="store_true")
+    subparser = subparsers.add_parser('runserver', help="run web server")
+    subparser.add_argument("-D", "--daemon", action="store_true",
+                           help="run as daemon")
 
     def __new__(cls):
         cmd_args = cls.parser.parse_args()

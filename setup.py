@@ -15,5 +15,5 @@ setup(
     include_package_data=True,
     install_requires=['alembic==0.9.2', 'requests', 'SQLAlchemy', 'PyMySQL',
                       'flask', 'flask_admin', 'bs4==0.0.1', "blinker",
-                      "pandas"],
+                      "pandas", "gunicorn"],
 )
