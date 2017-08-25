@@ -401,8 +401,10 @@ class CommunityJob(JobWithCommunity):
             for h_info in houses_info:
                 if h_info["outer_id"] in existing_outer_ids:
                     house = existing_outer_ids[h_info["outer_id"]]
-                    house.new = False
                     price_change = h_info["price"] - house.price
+                    # update house info
+                    house.price = h_info["price"]
+                    house.new = False
                     if not house.available:
                         house.available = True
                         house.available_change_times += 1
@@ -411,6 +413,8 @@ class CommunityJob(JobWithCommunity):
                                     **h_info)
                     price_change = None
 
+                # new house or house not check
+                # the house may be checked more than once
                 if (house.last_batch_number is None
                    or house.last_batch_number != self.batch_number):
                     h_record = HouseRecordLJ(house, self.batch_job,
