@@ -135,6 +135,23 @@ def avg_price():
                          "y_min": y_min})
 
 
+@app.route('/api/community_detail/latest', methods=['GET'])
+@cached()
+def community_detail():
+    community_id = request.args["community_id"]
+    col_created_at = func.date_format(HouseLJ.created_at,'%Y-%m-%d'
+                                      ).label(HouseLJ.created_at.name)
+    query = (select([col_created_at, HouseLJ.area, HouseLJ.price_origin,
+                     HouseLJ.price])
+             .where(HouseLJ.community_id == community_id)
+             .where(HouseLJ.available.is_(True))
+             .order_by(HouseLJ.area, HouseLJ.price))
+    info_raw = app.db_engine.execute(query).fetchall()
+    house_list = [dict(r) for r in info_raw]
+
+    return jsonify(data={"houses": house_list})
+
+
 def w_avg(df):
     return round(np.average(df["price"].values, weights=df["area"].values),2)
 
