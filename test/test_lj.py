@@ -60,12 +60,17 @@ class Test(unittest.TestCase):
         self.http_session.close()
 
     def test_1(self):
+        """test lj_search and load_detail"""
         info = self.community.lj_search(self.http_session, 1,
                                         self.config.lj_number_per_page)
         self.assertTrue(info["community_info"] is not None)
         self.community.update(**info["community_info"])
 
         h_info = info["houses_info"][0]
+        for key in ("outer_id", "price"):
+            self.assertTrue(h_info.get(key) is not None)
+        for key in ("area", "floor", "build_year"):
+            self.assertTrue(key in h_info)
         house = HouseLJ(h_info.pop("outer_id"), self.community, **h_info)
 
         self.db_session.add_all([self.community, house])

@@ -2,6 +2,7 @@
 
 import re
 import math
+import json
 import logging
 import functools
 
@@ -36,10 +37,11 @@ class CommunityLJ(Community):
         'polymorphic_identity': 'lianjia',
     }
 
-    SEARCH_URL = 'http://sh.lianjia.com/ershoufang/d%sq%ss20'
+    SEARCH_URL = 'http://sh.lianjia.com/ershoufang/pg%scol1c%s/'
     NUMBER_PER_PAGE = 30
 
-    p_build_year = re.compile('\|\s*(\d+)\s*年建')
+    p_build_year = re.compile("(\d+)年|塔楼|板楼")
+    p_area = re.compile("(\d+(\.\d+)?)平")
 
     def __init__(self, name, outer_id, area):
         Community.__init__(self, name, outer_id, area.district, area=area)
@@ -70,7 +72,7 @@ class CommunityLJ(Community):
 
         try:
             # get total page
-            total_num = int(soup.find("span", class_="result-count strong-num")
+            total_num = int(soup.find("h2", class_="total fl").find("span")
                             .get_text())
             total_page = math.ceil(total_num / number_per_page)
         except (ValueError, AttributeError) as e:
@@ -82,60 +84,81 @@ class CommunityLJ(Community):
             # no house_found
             on_page = 0
         else:
-            on_page = int(soup.find("span", class_="current").get_text())
-            if page != on_page:
-                raise ParseError("request lianjia.com community page of page"
-                                 " %s, but get page %s: %s" % (
-                                 page, on_page, resp.url))
+            raw_div = soup.find("div", class_="page-box house-lst-page-box")
 
-        # get community info
-        if on_page <= 1:
-            li_tags = soup.find("div", class_="m-side-bar").ul.find_all("li")
-            span_c = "num strong-num"
+            if raw_div is None:
+                raise ParseError("can not find div of page information: %s"
+                                 % resp.url)
+
             try:
-                average_price = int(li_tags[0].find("span", class_=span_c)
-                                    .get_text())
-            except AttributeError:
-                average_price = None
-            house_available = int(li_tags[1].find("span", class_=span_c)
-                                  .get_text())
-            sold_last_season = int(li_tags[2].find("span", class_=span_c)
-                                   .get_text())
-            view_last_month = int(li_tags[3].find("span", class_=span_c)
-                                  .get_text())
-            c_info = {"average_price": average_price,
-                      "house_available": house_available,
-                      "sold_last_season": sold_last_season,
-                      "view_last_month": view_last_month}
-        else:
-            c_info = None
+                page_info = json.loads(raw_div["page-data"])
+                on_page = page_info["curPage"]
+            except (KeyError, json.decoder.JSONDecodeError):
+                raise ParseError("parse page information failed: %s" % resp.url)
+
+            if page != on_page:
+                raise ParseError("request lianjia.com community of page %s, "
+                                 "but get page %s: %s" % (
+                                 page, on_page, resp.url))
+        # get community info
+        # record nothing, changed since version 1.0.1
+        c_info = {} if on_page <= 1 else None
 
         # get house info
         houses_info = []
-        info_list = soup.find_all("div", class_="info") or []
-        for info in info_list:
-            detail = {"outer_id": info.div.a["key"]}
+        if total_num > 0:
+            raw_ul = soup.find("ul", class_="sellListContent")
+            if raw_ul is None:
+                raise ParseError("can not find house list: %s" % resp.url)
 
-            rows = info.find_all("div", class_="info-row")
-            detail["price"] = int(rows[0].div.span.get_text())
-            cols = rows[0].span.get_text().split("|")
-            detail["room"] = cols[0].strip()
-            detail["area"] = float(cols[1].strip().replace("平", ""))
-            detail["floor"] = cols[2].strip()
+            li_list = raw_ul.find_all("li", class_="clear") or []
 
-            r = cls.p_build_year.search(rows[1].span.get_text())
-            if r:
-                detail["build_year"] = int(r.groups()[0])
-            else:
-                detail["build_year"] = None
+            for raw_li in li_list:
+                try:
+                    h_outer_id = raw_li.find("div", class_="btn-follow"
+                                             )["data-hid"]
+                    h_price = int(float(raw_li.find("div", class_="totalPrice")
+                                        .span.get_text()))
+                except Exception as e:
+                    logger.exception(e)
+                    raise ParseError("parse house outer_id or price failed: %s"
+                                     % resp.url)
 
-            houses_info.append(detail)
+                position_info = raw_li.find("div", class_="positionInfo"
+                                            ).get_text()
+                rs = cls.p_build_year.search(position_info)
+                if rs is None:
+                    logger.warning("get house position failed: %s, %s" %
+                                   (resp.url, h_outer_id))
+                    h_build_year = h_floor = None
+                else:
+                    g_match = rs.groups()[0]
+                    if g_match is None:
+                        h_build_year = None
+                    else:
+                        h_build_year = int(g_match)
+                    h_floor = position_info[:rs.span()[0]]
+
+                house_info = raw_li.find("div", class_="houseInfo").get_text()
+                rs = cls.p_area.search(house_info)
+                if rs is None:
+                    logger.warning("get house area failed: %s, %s" %
+                                   (resp.url, h_outer_id))
+                    h_area = 0
+                else:
+                    h_area = float(rs.groups()[0])
+
+                houses_info.append({"outer_id": h_outer_id,
+                                    "price": h_price,
+                                    "build_year": h_build_year,
+                                    "floor": h_floor,
+                                    "area": h_area})
 
         if (total_page > 1
            and on_page == 1
            and len(houses_info) != number_per_page):
             raise ParseError("It seems that you set wrong number_per_page for"
-                             "lianjia community.")
+                             "lianjia community: %s" % resp.url)
 
         return {"community_info": c_info,
                 "houses_info": houses_info,
@@ -187,16 +210,14 @@ class HouseLJ(IdMixin, Base):
         info = {}
 
         # check
-        main_info = soup.find("ul", class_="maininfo-minor maininfo-item")
-        li_tags = main_info.find_all("li")
-        tmp = li_tags[-1].get_text().replace(" ", "")
-        if tmp.find(self.outer_id) < 0:
+        house_record = soup.find("div", "houseRecord").text
+        if house_record.find(self.outer_id) < 0:
             raise ParseError("get house page with invalid outer_id, %s: %s"
-                             % (tmp, resp.url))
+                             % (house_record, resp.url))
 
-        look_list = soup.find('look-list')
-        info["view_last_week"] = int(look_list.get("count7"))
-        info["view_last_month"] = int(look_list.get("count90"))
+        raw_div = soup.find("div", class_="panel")
+        info["view_last_week"] = int(raw_div.find("div", class_="count").text)
+        info["view_last_month"] = int(raw_div.find("span").text)
 
         return info
 
@@ -307,7 +328,7 @@ class BatchJobLJ(BatchJob):
                 self.commit()
                 result = base.FAILED
 
-        # is not able to put all the check job in the unit test,
+        # is not able to put all the validation in the unit test,
         # so check the result when finished.
         if result == base.FINISHED:
             result = self.check_result()
