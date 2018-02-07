@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 from flask import (render_template, redirect, url_for, jsonify, request, g)
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 
 from house_tracker.models import *
 from . import app, cached
@@ -139,9 +139,10 @@ def avg_price():
 @cached()
 def community_detail():
     community_id = request.args["community_id"]
-    col_created_at = func.date_format(HouseLJ.created_at,'%Y-%m-%d'
-                                      ).label(HouseLJ.created_at.name)
-    query = (select([col_created_at, HouseLJ.area, HouseLJ.price_origin,
+    date_str = func.date_format(HouseLJ.date_to_market, '%Y-%m-%d')
+    col_date_to_market = case([(HouseLJ.date_to_market.is_(None), "未知")],
+                              else_=date_str).label(HouseLJ.date_to_market.name)
+    query = (select([col_date_to_market, HouseLJ.area, HouseLJ.price_origin,
                      HouseLJ.price])
              .where(HouseLJ.community_id == community_id)
              .where(HouseLJ.available.is_(True))

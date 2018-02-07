@@ -5,12 +5,14 @@ import math
 import json
 import logging
 import functools
+from datetime import datetime
 
 from bs4 import BeautifulSoup
 from requests import Request
 from sqlalchemy import (Column, ForeignKey, ForeignKeyConstraint, func, select,
                         case, text)
-from sqlalchemy.dialects.mysql import BINARY, VARCHAR, INTEGER, BOOLEAN, FLOAT
+from sqlalchemy.dialects.mysql import (BINARY, VARCHAR, INTEGER, BOOLEAN, FLOAT,
+                                       DATE)
 from sqlalchemy.orm import relationship, backref
 
 from . import base
@@ -175,6 +177,8 @@ class HouseLJ(IdMixin, Base):
     room = Column(VARCHAR(64))
     build_year = Column(INTEGER)
     floor = Column(VARCHAR(64))
+    date_to_market = Column(DATE)
+    last_purchase_date = Column(DATE)
     price_origin = Column(INTEGER)
     last_batch_number = Column(INTEGER)
     new = Column(BOOLEAN)
@@ -215,11 +219,58 @@ class HouseLJ(IdMixin, Base):
             raise ParseError("get house page with invalid outer_id, %s: %s"
                              % (house_record, resp.url))
 
+        # transaction info
+        raw_div = soup.find("div", class_="transaction")
+        if raw_div is None:
+            logger.warning("get transaction div failed: %s" % resp.url)
+        else:
+            ts_info = self.lj_parse_transaction_info(raw_div)
+            if not ts_info:
+                # None or {}
+                logger.warning("parse transaction info failed: %s" % resp.url)
+            else:
+                if "date_to_market" not in ts_info:
+                    logger.warning("not able to get date_to_market: %s"
+                                   % resp.url)
+                info.update(ts_info)
+
+        # view info
         raw_div = soup.find("div", class_="panel")
         info["view_last_week"] = int(raw_div.find("div", class_="count").text)
         info["view_last_month"] = int(raw_div.find("span").text)
 
         return info
+
+    @staticmethod
+    def lj_parse_transaction_info(raw_div):
+
+        raw_spans = raw_div.find_all("span", class_="label")
+        if not raw_spans:
+            logger.warning("get transaction spans failed")
+            return
+
+        info = {}
+        for raw_span in raw_spans:
+            try:
+                if raw_span.text == "挂牌时间":
+                    tmp = datetime.strptime(raw_span.findNext().text,
+                                            "%Y-%m-%d")
+                    info["date_to_market"] = tmp.date()
+                elif raw_span.text == "上次交易":
+                    tmp = datetime.strptime(raw_span.findNext().text,
+                                            "%Y-%m-%d")
+                    info["last_purchase_date"] = tmp.date()
+            except ValueError:
+                # strptime failed
+                pass
+            except Exception as e:
+                logger.exception(e)
+
+            if len(info) == 2:
+                break
+
+        return info
+
 
 
 class CommunityRecordLJ(IdMixin, Base):
@@ -299,6 +350,9 @@ class HouseRecordLJ(IdMixin, Base):
         info = self.house.lj_parse(resp)
         self.house.view_last_week = self.view_last_week = info["view_last_week"]
         self.house.view_last_month = self.view_last_month = info["view_last_month"]
+        for key in ("date_to_market", "last_purchase_date"):
+            if key in info:
+                setattr(self.house, key, info[key])
 
 
 class BatchJobLJ(BatchJob):
